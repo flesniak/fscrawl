@@ -21,7 +21,7 @@
 #define FILES_TABLE "fscrawl_files"
 #define DIRECTORIES_TABLE "fscrawl_directories"
 
-#define VERSION "1.2"
+#define VERSION "1.3"
 
 using namespace std;
 
@@ -140,30 +140,34 @@ void deleteDirectory(unsigned int id) { //completely delete directory "id" inclu
 
 void deleteDeletedFiles(unsigned int id, vector<unsigned int> *presentFiles, vector<unsigned int> *presentDirectories) {
   stringstream ss;
+
   debug("deleting orphaned files and directories",3);
+  ss << "DELETE FROM "FILES_TABLE" WHERE parent=" << id;
   if( !presentFiles->empty() ) {
-    ss << "DELETE FROM "FILES_TABLE" WHERE parent=" << id << " AND id NOT IN (";
+    ss << " AND id NOT IN (";
     for(vector<unsigned int>::iterator it = presentFiles->begin(); it != presentFiles->end(); it++) {
       if( it != presentFiles->begin() )
          ss << ",";
       ss << *it;
     }
     ss << ")";
-    stmt->execute(ss.str());
   }
+  stmt->execute(ss.str());
+
+  ss.str("");
+  ss << "SELECT id FROM "DIRECTORIES_TABLE" WHERE parent=" << id;
   if( !presentDirectories->empty() ) {
-    ss.str("");
-    ss << "SELECT id FROM "DIRECTORIES_TABLE" WHERE parent=" << id << " AND id NOT IN (";
+    ss << " AND id NOT IN (";
     for(vector<unsigned int>::iterator it = presentDirectories->begin(); it != presentDirectories->end(); it++) {
       if( it != presentDirectories->begin() )
          ss << ",";
       ss << *it;
     }
     ss << ")";
-    sql::ResultSet *res = stmt->executeQuery(ss.str());
-    while( res->next() )
-      deleteDirectory( res->getInt(1) );
   }
+  sql::ResultSet *res = stmt->executeQuery(ss.str());
+  while( res->next() )
+    deleteDirectory( res->getInt(1) );
 }
 
 uint64_t parseDirectory(unsigned int id, string path) { //returns the directory size
