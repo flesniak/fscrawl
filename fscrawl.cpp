@@ -21,7 +21,7 @@
 #define FILES_TABLE "fscrawl_files"
 #define DIRECTORIES_TABLE "fscrawl_directories"
 
-#define VERSION "1.3"
+#define VERSION "1.31"
 
 using namespace std;
 
@@ -75,7 +75,7 @@ int addFile(unsigned int parent, string name, uint64_t size, time_t mtime) {
     prepInsertFile->setString(1,name);
     prepInsertFile->setUInt(2,parent);
     prepInsertFile->setUInt64(3,size);
-    prepInsertFile->setUInt(3,mtime);
+    prepInsertFile->setUInt(4,mtime);
     prepInsertFile->execute();
     delete res;
     res = prepLastInsertID->executeQuery();
