@@ -373,7 +373,8 @@ int main(int argc, char* argv[]) {
                   "size BIGINT UNSIGNED,"
                   "date DATETIME DEFAULT NULL,"
                   "INDEX(parent))"
-                  "DEFAULT CHARSET=utf8");
+                  "DEFAULT CHARACTER SET utf8"
+                  "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
     stmt->execute("CREATE TABLE IF NOT EXISTS "DIRECTORIES_TABLE
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
                   "name VARCHAR(255) NOT NULL,"
@@ -381,7 +382,8 @@ int main(int argc, char* argv[]) {
                   "size BIGINT UNSIGNED,"
                   "date DATETIME DEFAULT NULL,"
                   "INDEX(parent))"
-                  "DEFAULT CHARSET=utf8");
+                  "DEFAULT CHARACTER SET utf8"
+                  "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
 
     //prepare heavily used mysql functions
     prepQueryFile = con->prepareStatement("SELECT id,size,date FROM "FILES_TABLE" WHERE parent=? AND name=?");
