@@ -9,6 +9,8 @@
 #include <sstream>
 #include <ctime>
 #include <cerrno>
+#include <map>
+#include <list>
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -38,15 +40,94 @@ sql::PreparedStatement *prepUpdateFileSize;
 sql::PreparedStatement *prepUpdateDirDate;
 sql::PreparedStatement *prepUpdateFileDate;
 sql::Statement *stmt;
+map<uint32_t,uint32_t> parentIdCache;
+//        id,  parent
+
 
 inline void debug(string message, unsigned char level) {
   if( verbosity >= level )
-    cerr << "V" << verbosity << ": " << message << endl;
+    cerr << "V" << (uint32_t)level << ": " << message << endl;
 }
 
 string errnoString() {
    char * e = strerror(errno);
    return e ? e : "";
+}
+
+//tries to trace id back to 0, if successful, returns a set of new parents that can be cached, otherwise an empty list
+/*bool verifyTraceBack(sql::statement *stmt, uint32_t id) {
+  //get parent of id
+  uint32_t parent = 0;
+  bool cached = true;
+  if( (map<uint32_t,uint32_t>::iterator it = parentIdCache.find(id)) == parentIdCache.end() ) {
+  stringstream ss;
+    ss << "SELECT parent FROM "DIRECTORIES_TABLE" WHERE id=" << id;
+    sql::ResultSet *res = stmt->executeQuery(ss.str());
+    if( !res->next() )
+      return false;
+    parent = res->getUInt(1);
+    cached = false;
+  else
+    parent = *it->second;
+
+  if( parent == 0 ) { //has root as parent -> is valid
+    if( !cached )
+      parentIdCache.insert(id,parent);
+    return true;
+  }
+  if( verifyTraceBack(stmt,parent) ) {
+    if( !cached )
+      parentIdCache.insert(id,parent);
+    return true;
+  }
+  return false; //traceBack was not able to reach the root entry -> failure!
+}*/
+
+//verifies the complete tree, deletes orphaned entries
+//resource intensive, traces every entry up to the root or a cached (valid) parent id
+int verifyTree(sql::Connection *con) {
+  parentIdCache.clear();
+  sql::PreparedStatement *prepGetDirParent = con->prepareStatement("SELECT parent FROM "DIRECTORIES_TABLE" WHERE id=?");
+
+  debug("Checking directories...",3);
+  sql::Statement *stmt = con->createStatement();
+  sql::ResultSet *res = stmt->executeQuery("SELECT id,parent FROM "DIRECTORIES_TABLE);
+  while( res->next() ) { //loop through all directories
+    uint32_t id = res->getUInt(1);
+    uint32_t parent = res->getUInt(2);
+    if( parent == 0 ) //parent 0 is always valid
+      continue;
+    prepGetDirParent->setUInt(1,parent);
+    sql::ResultSet *parentQueryResult = prepGetDirParent->executeQuery();
+    if( parentQueryResult->next() ) { //parent exists, cache it - saves us query time on the files later on
+      parentIdCache[id] = parent;
+      parentIdCache[parent] = parentQueryResult->getUInt(1);
+    }
+    else {
+      stringstream ss;
+      ss << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree";
+      debug(ss.str(),2);
+      deleteDirectory(id);
+    }
+    delete parentQueryResult;
+  }
+  delete res;
+
+  debug("Directories verified, checking files...",3);
+  res = stmt->executeQuery("SELECT id,parent FROM "FILES_TABLE);
+  while( res->next() ) {
+    uint32_t id = res->getUInt(1);
+    uint32_t parent = res->getUInt(2);
+    if( parent == 0 || parentIdCache.count(parent) == 0 ) {
+      stringstream ss;
+      ss << "Parent " << parent << " of file " << id << " does not exist. Deleting that file";
+      ss.str("");
+      ss << "DELETE FROM "FILES_TABLE" WHERE id=" << id;
+      stmt->executeQuery(ss.str());
+    }
+  }
+  delete res;
+  delete stmt;
 }
 
 //inserts file "name" under "parent" with "size" if not exists and (in any case) returns its id
@@ -222,7 +303,7 @@ uint64_t parseDirectory(unsigned int id, string path) { //returns the directory 
 }
 
 void usage() {
-  cout << "Usage: fscrawl [OPTIONS] <basedir|-c>" << endl;
+  cout << "Usage: fscrawl <MODE> [OPTIONS] <basedir|-c>" << endl;
   cout << "  -h, --help\tDisplay this help and exit" << endl;
   cout << "  -u, --user\tSpecify database user (default: \"root\")" << endl;
   cout << "  -p, --password\tSpecify database user password (default: none)" << endl;
@@ -230,17 +311,20 @@ void usage() {
   cout << "  -d, --database\tDatabase to use (default: \"fscrawl\")" << endl;
   cout << "  -t, --modtime\tUse mtime for the \"date\" column" << endl;
   cout << "  -f, --fakepath\tInstead of having basedir as absolute root directory, parse all files as if they were unter this fakepath" << endl;
-  cout << "  -c, --clear\tDelete the tree for this fakepath, others will be kept (may also be called without basedir, then no scanning will be done)" << endl;
-  cout << "  -C, --clearall\tClear the database - ALL DATA WILL BE DELETED (may also be called without basedir, then no scanning will be done)" << endl;
   cout << "  -v, --verbose\tIncrease debug level (0x=error,1x=info,2x=debug)" << endl;
   cout << "  -q, --quiet\tDont display statistics after crawling" << endl;
-  cout << "fscrawl version "VERSION << endl;
+  cout << endl << "The following options may be called without a basedir, then no scanning will be done:" << endl;
+  cout << "  -c, --clear\tDelete the tree for this fakepath, others will be kept" << endl;
+  cout << "  -C, --clearall\tClear the database - ALL DATA WILL BE DELETED" << endl;
+  cout << "  -V, --verify\tVerify the tree structure - takes some time" << endl;
+  cout << endl << "fscrawl version "VERSION << endl;
 }
 
 int main(int argc, char* argv[]) {
   verbosity = 1; //default, display stats after crawling
   filecount = 0;
   use_mtime = false;
+  bool verify = false;
   unsigned char clear = 0;
   string basedir;
   string fakepath;
@@ -329,6 +413,10 @@ int main(int argc, char* argv[]) {
       fakepath = argv[i];
       continue;
     }
+    if( strcmp(argv[i],"-V") == 0 || strcmp(argv[i],"--verify") == 0) {
+      verify = true;
+      continue;
+    }
     if( strncmp(argv[i],"-",1) == 0 ) {
       cerr << "ERROR: unknown argument " << argv[i] << endl;
       usage();
@@ -344,7 +432,7 @@ int main(int argc, char* argv[]) {
   }
 
   if( basedir.empty() ) {
-    if( !clear ) { //if no basedir is given but clear is set, only clear the db and exit
+    if( !clear && !verify ) { //if no basedir is given but clear is set, only clear the db and exit
       cout << "ERROR: no basedir given" << endl;
       usage();
       exit(1);
@@ -363,6 +451,11 @@ int main(int argc, char* argv[]) {
     debug("clearing database, dropping tables - ALL DATA IS NOW GONE",2);
     stmt->execute("DROP TABLE "FILES_TABLE);
     stmt->execute("DROP TABLE "DIRECTORIES_TABLE);
+  }
+  if( verify ) {
+    debug("Launching tree verification",3);
+    verifyTree(con);
+    debug("Tree verification done",3);
   }
   if( !basedir.empty() ) {
     debug("preparing database",3); //create database tables in case they do not exist
@@ -435,6 +528,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  delete stmt;
   con->close();
   delete con;
 
