@@ -23,7 +23,7 @@
 #define FILES_TABLE "fscrawl_files"
 #define DIRECTORIES_TABLE "fscrawl_directories"
 
-#define VERSION "1.41"
+#define VERSION "1.42"
 
 using namespace std;
 
@@ -450,12 +450,12 @@ int main(int argc, char* argv[]) {
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
 
     //prepare heavily used mysql functions
-    prepQueryFile = con->prepareStatement("SELECT id,size,date FROM "FILES_TABLE" WHERE parent=? AND name=? COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
+    prepQueryFile = con->prepareStatement("SELECT id,size,date FROM "FILES_TABLE" WHERE parent=? AND name=?");
     prepInsertFile = con->prepareStatement("INSERT INTO "FILES_TABLE" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
     prepUpdateFileSize = con->prepareStatement("UPDATE "FILES_TABLE" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
     prepUpdateFileDate = con->prepareStatement("UPDATE "FILES_TABLE" SET date=FROM_UNIXTIME(?) WHERE id=?");
 
-    prepQueryDir = con->prepareStatement("SELECT id,date FROM "DIRECTORIES_TABLE" WHERE parent=? AND name=? COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
+    prepQueryDir = con->prepareStatement("SELECT id,date FROM "DIRECTORIES_TABLE" WHERE parent=? AND name=?");
     prepInsertDir = con->prepareStatement("INSERT INTO "DIRECTORIES_TABLE" (name,parent,date) VALUES (?, ?, FROM_UNIXTIME(?))");
     prepUpdateDirSize = con->prepareStatement("UPDATE "DIRECTORIES_TABLE" SET size=? WHERE id=?"); //directories won't have their date changed on size change
     prepUpdateDirDate = con->prepareStatement("UPDATE "DIRECTORIES_TABLE" SET date=FROM_UNIXTIME(?) WHERE id=?");
