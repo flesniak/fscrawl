@@ -54,35 +54,6 @@ string errnoString() {
    return e ? e : "";
 }
 
-//tries to trace id back to 0, if successful, returns a set of new parents that can be cached, otherwise an empty list
-/*bool verifyTraceBack(sql::statement *stmt, uint32_t id) {
-  //get parent of id
-  uint32_t parent = 0;
-  bool cached = true;
-  if( (map<uint32_t,uint32_t>::iterator it = parentIdCache.find(id)) == parentIdCache.end() ) {
-  stringstream ss;
-    ss << "SELECT parent FROM "DIRECTORIES_TABLE" WHERE id=" << id;
-    sql::ResultSet *res = stmt->executeQuery(ss.str());
-    if( !res->next() )
-      return false;
-    parent = res->getUInt(1);
-    cached = false;
-  else
-    parent = *it->second;
-
-  if( parent == 0 ) { //has root as parent -> is valid
-    if( !cached )
-      parentIdCache.insert(id,parent);
-    return true;
-  }
-  if( verifyTraceBack(stmt,parent) ) {
-    if( !cached )
-      parentIdCache.insert(id,parent);
-    return true;
-  }
-  return false; //traceBack was not able to reach the root entry -> failure!
-}*/
-
 //verifies the complete tree, deletes orphaned entries
 //resource intensive, traces every entry up to the root or a cached (valid) parent id
 int verifyTree(sql::Connection *con) {
@@ -479,12 +450,12 @@ int main(int argc, char* argv[]) {
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
 
     //prepare heavily used mysql functions
-    prepQueryFile = con->prepareStatement("SELECT id,size,date FROM "FILES_TABLE" WHERE parent=? AND name=?");
+    prepQueryFile = con->prepareStatement("SELECT id,size,date FROM "FILES_TABLE" WHERE parent=? AND name=? COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
     prepInsertFile = con->prepareStatement("INSERT INTO "FILES_TABLE" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
     prepUpdateFileSize = con->prepareStatement("UPDATE "FILES_TABLE" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
     prepUpdateFileDate = con->prepareStatement("UPDATE "FILES_TABLE" SET date=FROM_UNIXTIME(?) WHERE id=?");
 
-    prepQueryDir = con->prepareStatement("SELECT id,date FROM "DIRECTORIES_TABLE" WHERE parent=? AND name=?");
+    prepQueryDir = con->prepareStatement("SELECT id,date FROM "DIRECTORIES_TABLE" WHERE parent=? AND name=? COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
     prepInsertDir = con->prepareStatement("INSERT INTO "DIRECTORIES_TABLE" (name,parent,date) VALUES (?, ?, FROM_UNIXTIME(?))");
     prepUpdateDirSize = con->prepareStatement("UPDATE "DIRECTORIES_TABLE" SET size=? WHERE id=?"); //directories won't have their date changed on size change
     prepUpdateDirDate = con->prepareStatement("UPDATE "DIRECTORIES_TABLE" SET date=FROM_UNIXTIME(?) WHERE id=?");
