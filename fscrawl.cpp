@@ -23,7 +23,7 @@
 #define FILES_TABLE "fscrawl_files"
 #define DIRECTORIES_TABLE "fscrawl_directories"
 
-#define VERSION "1.4"
+#define VERSION "1.41"
 
 using namespace std;
 
@@ -437,7 +437,7 @@ int main(int argc, char* argv[]) {
                   "size BIGINT UNSIGNED,"
                   "date DATETIME DEFAULT NULL,"
                   "INDEX(parent))"
-                  "DEFAULT CHARACTER SET utf8"
+                  "DEFAULT CHARACTER SET utf8 "
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
     stmt->execute("CREATE TABLE IF NOT EXISTS "DIRECTORIES_TABLE
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
@@ -446,7 +446,7 @@ int main(int argc, char* argv[]) {
                   "size BIGINT UNSIGNED,"
                   "date DATETIME DEFAULT NULL,"
                   "INDEX(parent))"
-                  "DEFAULT CHARACTER SET utf8"
+                  "DEFAULT CHARACTER SET utf8 "
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
 
     //prepare heavily used mysql functions
