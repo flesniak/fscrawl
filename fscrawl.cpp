@@ -23,7 +23,7 @@
 #define FILES_TABLE "fscrawl_files"
 #define DIRECTORIES_TABLE "fscrawl_directories"
 
-#define VERSION "1.31"
+#define VERSION "1.4"
 
 using namespace std;
 
@@ -52,6 +52,20 @@ inline void debug(string message, unsigned char level) {
 string errnoString() {
    char * e = strerror(errno);
    return e ? e : "";
+}
+
+void deleteDirectory(unsigned int id) { //completely delete directory "id" including all subdirs/files
+  stringstream ss;
+  ss << "SELECT id FROM "DIRECTORIES_TABLE" WHERE parent=" << id;
+  sql::ResultSet *res = stmt->executeQuery(ss.str());
+  while( res->next() )
+    deleteDirectory( res->getInt(1) ); //first, delete every subdirectory
+  ss.str("");
+  ss << "DELETE FROM "FILES_TABLE" WHERE parent=" << id;
+  stmt->execute(ss.str()); //now, delete every file in this directory
+  ss.str("");
+  ss << "DELETE FROM "DIRECTORIES_TABLE" WHERE id=" << id;
+  stmt->execute(ss.str()); //finally, delete this directory
 }
 
 //verifies the complete tree, deletes orphaned entries
@@ -174,20 +188,6 @@ int addDirectory(unsigned int parent, string name, time_t mtime) {
   }
   delete res;
   return dirId;
-}
-
-void deleteDirectory(unsigned int id) { //completely delete directory "id" including all subdirs/files
-  stringstream ss;
-  ss << "SELECT id FROM "DIRECTORIES_TABLE" WHERE parent=" << id;
-  sql::ResultSet *res = stmt->executeQuery(ss.str());
-  while( res->next() )
-    deleteDirectory( res->getInt(1) ); //first, delete every subdirectory
-  ss.str("");
-  ss << "DELETE FROM "FILES_TABLE" WHERE parent=" << id;
-  stmt->execute(ss.str()); //now, delete every file in this directory
-  ss.str("");
-  ss << "DELETE FROM "DIRECTORIES_TABLE" WHERE id=" << id;
-  stmt->execute(ss.str()); //finally, delete this directory
 }
 
 void deleteDeletedFiles(unsigned int id, vector<unsigned int> *presentFiles, vector<unsigned int> *presentDirectories) {
