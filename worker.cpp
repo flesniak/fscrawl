@@ -291,7 +291,7 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
 }
 
 inline void worker::log(const string& message, logLevel level) {
-  if( level >= p_logLevel )
+  if( level <= p_logLevel )
     cout << "V" << (uint32_t)level << ": " << message << endl;
   p_lastLogLength = message.length();
 }
