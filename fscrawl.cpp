@@ -1,6 +1,3 @@
-/* compile with:
- * g++ -I /usr/include/mysql-connector/ -lmysqlcppconn -lstdc++ -O2 -o fscrawl fscrawl.cpp */
-
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -170,13 +167,13 @@ int main(int argc, char* argv[]) {
   }
   if( !basedir.empty() ) {
     //ascend to given fakepath
-    w->ascendFakepath(fakepath);
+    uint32_t fakepathId = w->ascendPath(fakepath);
 
     //Save starting time
     log("starting parser",worker::debug);
     time_t start = time(0);
 
-    w->parseDirectory(basedir);
+    w->parseDirectory(basedir, fakepathId);
 
     //Get time now, calculate and output duration
     double duration = difftime(start,time(0));
