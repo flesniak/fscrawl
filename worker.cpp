@@ -451,8 +451,10 @@ void worker::setInheritance(bool inheritSize, bool inheritMTime) {
 }
 
 void worker::setTables(const string& directoryTable, const string& fileTable) {
-  p_directoryTable = directoryTable;
-  p_fileTable = fileTable;
+  if( !directoryTable.empty() )
+    p_directoryTable = directoryTable;
+  if( !fileTable.empty() )
+    p_fileTable = fileTable;
   p_databaseInitialized = false;
 }
 
