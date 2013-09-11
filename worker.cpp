@@ -16,23 +16,6 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_inheritSize(true),
                                                 p_connection(dbConnection),
                                                 p_stmt(p_connection->createStatement()) {
-  //p_prepare heavily used mysql functions
-  p_prepQueryFileById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE id=?");
-  p_prepQueryFileByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE parent=? AND name=?");
-  p_prepQueryFilesByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE parent=?");
-  p_prepInsertFile = p_connection->prepareStatement("INSERT INTO "+p_fileTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
-  p_prepUpdateFile = p_connection->prepareStatement("UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
-  p_prepDeleteFile = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE id=?");
-  p_prepDeleteFiles = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE parent=?");
-
-  p_prepQueryDirById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE id=?");
-  p_prepQueryDirByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=? AND name=?");
-  p_prepQueryDirsByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=?");
-  p_prepInsertDir = p_connection->prepareStatement("INSERT INTO "+p_directoryTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
-  p_prepUpdateDir = p_connection->prepareStatement("UPDATE "+p_directoryTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
-  p_prepDeleteDir = p_connection->prepareStatement("DELETE FROM "+p_directoryTable+" WHERE id=?");
-
-  p_prepLastInsertID = p_connection->prepareStatement("SELECT LAST_INSERT_ID()");
 }
 
 worker::~worker() {
@@ -229,6 +212,41 @@ void worker::initDatabase() {
                   "INDEX(parent))"
                   "DEFAULT CHARACTER SET utf8 "
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
+
+  LOG(logDebug) << "preparing statements";
+  if( p_prepQueryFileById != 0 ) delete p_prepQueryFileById;
+  if( p_prepQueryFileByName != 0 ) delete p_prepQueryFileByName;
+  if( p_prepQueryFilesByParent != 0 ) delete p_prepQueryFilesByParent;
+  if( p_prepInsertFile != 0 ) delete p_prepInsertFile;
+  if( p_prepUpdateFile != 0 ) delete p_prepUpdateFile;
+  if( p_prepDeleteFile != 0 ) delete p_prepDeleteFile;
+  if( p_prepDeleteFiles != 0 ) delete p_prepDeleteFiles;
+  if( p_prepQueryDirById != 0 ) delete p_prepQueryDirById;
+  if( p_prepQueryDirByName != 0 ) delete p_prepQueryDirByName;
+  if( p_prepQueryDirsByParent != 0 ) delete p_prepQueryDirsByParent;
+  if( p_prepInsertDir != 0 ) delete p_prepInsertDir;
+  if( p_prepUpdateDir != 0 ) delete p_prepUpdateDir;
+  if( p_prepDeleteDir != 0 ) delete p_prepDeleteDir;
+  if( p_prepLastInsertID != 0 ) delete p_prepLastInsertID;
+
+  //p_prepare heavily used mysql functions
+  p_prepQueryFileById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE id=?");
+  p_prepQueryFileByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE parent=? AND name=?");
+  p_prepQueryFilesByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE parent=?");
+  p_prepInsertFile = p_connection->prepareStatement("INSERT INTO "+p_fileTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
+  p_prepUpdateFile = p_connection->prepareStatement("UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
+  p_prepDeleteFile = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE id=?");
+  p_prepDeleteFiles = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE parent=?");
+
+  p_prepQueryDirById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE id=?");
+  p_prepQueryDirByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=? AND name=?");
+  p_prepQueryDirsByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=?");
+  p_prepInsertDir = p_connection->prepareStatement("INSERT INTO "+p_directoryTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
+  p_prepUpdateDir = p_connection->prepareStatement("UPDATE "+p_directoryTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
+  p_prepDeleteDir = p_connection->prepareStatement("DELETE FROM "+p_directoryTable+" WHERE id=?");
+
+  p_prepLastInsertID = p_connection->prepareStatement("SELECT LAST_INSERT_ID()");
+
   p_statistics.files = 0;
   p_statistics.directories = 0;
 }
