@@ -54,6 +54,10 @@ public:
   uint32_t ascendPath(string path, entry_t::type_t type = entry_t::directory, bool createDirectory = true);
   //Clear all database contents
   void clearDatabase();
+  //Delete directory by id recursively
+  void deleteDirectory(uint32_t id);
+  //Delete file by id
+  void deleteFile(uint32_t id);
   //The worker traces the path from id up to the base (including a faked path)
   string descendPath(uint32_t id, entry_t::type_t type);
   //Start to parse the directory path. path will be stripped from the files' path. If you want a path, use fakepath
@@ -64,8 +68,6 @@ public:
 private:
   void cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache);
   void cacheParent(uint32_t id, uint32_t parent);
-  void deleteDirectory(uint32_t id);
-  void deleteFile(uint32_t id);
   entry_t getDirectoryById(uint32_t id);
   entry_t getDirectoryByName(const string& name, uint32_t parent);
   entry_t getFileById(uint32_t id);

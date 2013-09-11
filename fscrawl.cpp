@@ -33,7 +33,7 @@ void usage() {
 
 int main(int argc, char* argv[]) {
   bool verify = false;
-  unsigned char clear = 0;
+  enum { clearNothing, clearFakepath, clearAll } clear;
   string basedir;
   string fakepath;
   string directoryTable;
@@ -125,8 +125,12 @@ int main(int argc, char* argv[]) {
       directoryTable = argv[i];
       continue;
     }
+    if( strcmp(argv[i],"-c") == 0 || strcmp(argv[i],"--clear") == 0 ) {
+      clear = clearFakepath;
+      continue;
+    }
     if( strcmp(argv[i],"-C") == 0 || strcmp(argv[i],"--clearall") == 0 ) {
-      clear = true;
+      clear = clearAll;
       continue;
     }
     if( strcmp(argv[i],"-f") == 0 || strcmp(argv[i],"--fakepath") == 0 ) {
@@ -159,7 +163,7 @@ int main(int argc, char* argv[]) {
 
   if( basedir.empty() ) {
     if( !clear && !verify ) { //if no basedir is given but clear is set, only clear the db and exit
-      cout << "ERROR: no basedir given";
+      LOG(logError) << "ERROR: no basedir given";
       usage();
       exit(1);
     }
@@ -178,7 +182,7 @@ int main(int argc, char* argv[]) {
   worker* w = new worker(con);
   w->setTables(directoryTable,fileTable);
 
-  if( clear == 2 ) {
+  if( clear == clearAll ) {
     w->clearDatabase();
   }
   if( verify ) {
@@ -188,6 +192,9 @@ int main(int argc, char* argv[]) {
     //ascend to given fakepath
     uint32_t fakepathId = w->ascendPath(fakepath);
     cout << "fakepathId " << fakepathId;
+
+    if( clear == clearFakepath )
+      w->deleteDirectory(fakepathId);
     /*//Save starting time
     LOG(logDebug) << "starting parser";
     time_t start = time(0);
