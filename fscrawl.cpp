@@ -6,12 +6,11 @@
 #include <mysql_connection.h>
 
 #include "worker.h"
+#include "logger.h"
 
-#define VERSION "1.50alpha"
+#define VERSION "1.99alpha"
 
 using namespace std;
-
-worker::logLevel logLevel;
 
 void usage() {
   cout << "Usage: fscrawl <MODE> [OPTIONS] <basedir|-c>" << endl;
@@ -21,7 +20,7 @@ void usage() {
   cout << "  -m, --host\tConnect to host (default: \"localhost\"" << endl;
   cout << "  -d, --database\tDatabase to use (default: \"fscrawl\")" << endl;
   cout << "  -f, --fakepath\tInstead of having basedir as absolute root directory, parse all files as if they were unter this fakepath" << endl;
-  cout << "  -v, --verbose\tIncrease log level (0x=status,1x=detailed,2x=debug)" << endl;
+  cout << "  -v, --verbose\tIncrease log level (0x=info,1x=detailed,2x=debug)" << endl;
   cout << "  -q, --quiet\tOnly display severe errors. Useful for cron-jobbing" << endl;
   cout << endl << "The following options may be called without a basedir, then no scanning will be done:" << endl;
   cout << "  -c, --clear\tDelete the tree for this fakepath, others will be kept" << endl;
@@ -30,13 +29,7 @@ void usage() {
   cout << endl << "fscrawl version "VERSION << endl;
 }
 
-inline void log(const string& message, worker::logLevel level) {
-  if( logLevel >= level )
-    cout << "V" << (uint32_t)level << ": " << message << endl;
-}
-
 int main(int argc, char* argv[]) {
-  logLevel = worker::status; //default, display stats after crawling
   bool verify = false;
   unsigned char clear = 0;
   string basedir;
@@ -45,27 +38,27 @@ int main(int argc, char* argv[]) {
   string mysql_password;
   string mysql_host("localhost");
   string mysql_database("fscrawl");
+  Logger::logLevel() = logInfo;
 
-  log("parsing command line arguments",worker::debug);
   for(int i = 1; i < argc; i++) {
     if( strcmp(argv[i],"-h") == 0 || strcmp(argv[i],"--help") == 0 ) {
       usage();
       exit(1);
     }
     if( strcmp(argv[i],"-v") == 0 || strcmp(argv[i],"--verbose") == 0) {
-      logLevel = (worker::logLevel)((uint32_t)logLevel+1);
+      Logger::logLevel() = (logLevel_t)( (uint32_t)Logger::logLevel() + 1 );
       continue;
     }
     if( strcmp(argv[i],"-vv") == 0 ) {
-      logLevel = (worker::logLevel)((uint32_t)logLevel+2);
+      Logger::logLevel() = (logLevel_t)( (uint32_t)Logger::logLevel() + 2 );
       continue;
     }
     if( strcmp(argv[i],"-vvv") == 0 ) {
-      logLevel = (worker::logLevel)((uint32_t)logLevel+3);
+      Logger::logLevel() = (logLevel_t)( (uint32_t)Logger::logLevel() + 3 );
       continue;
     }
     if( strcmp(argv[i],"-q") == 0 || strcmp(argv[i],"--quiet") == 0 ) {
-      logLevel = worker::quiet;
+      Logger::logLevel() = logError;
       continue;
     }
     if( strcmp(argv[i],"-u") == 0 || strcmp(argv[i],"--user") == 0) {
@@ -151,13 +144,14 @@ int main(int argc, char* argv[]) {
     if( basedir.at(basedir.size()-1) == '/' ) //don't try that on an empty basedir string
       basedir.erase(basedir.size()-1);
 
-  log("initializing sql driver",worker::debug);
+  Logger::facility() = new LoggerFacilityConsole;
+
+  LOG(logDebug) << "initializing sql driver";
   sql::Driver *driver = get_driver_instance();
   sql::Connection *con = driver->connect(mysql_host,mysql_user,mysql_password);
   con->setSchema(mysql_database);
 
   worker* w = new worker(con);
-  w->setLogLevel(logLevel);
 
   if( clear == 2 ) {
     w->clearDatabase();
@@ -168,9 +162,9 @@ int main(int argc, char* argv[]) {
   if( !basedir.empty() ) {
     //ascend to given fakepath
     uint32_t fakepathId = w->ascendPath(fakepath);
-
-    //Save starting time
-    log("starting parser",worker::debug);
+    cout << "fakepathId " << fakepathId << endl;
+    /*//Save starting time
+    LOG(logDebug) << "starting parser";
     time_t start = time(0);
 
     w->parseDirectory(basedir, fakepathId);
@@ -178,24 +172,18 @@ int main(int argc, char* argv[]) {
     //Get time now, calculate and output duration
     double duration = difftime(start,time(0));
     if( logLevel > worker::quiet ) {
-      unsigned int temp;
-      cout << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in ";
+      unsigned int hours, minutes;
 
       //Count hours
-      for(temp = 0; duration > 3600; temp++)
+      for(hours = 0; duration > 3600; hours++)
         duration -= 3600;
-      if( temp )
-        cout << temp << "h";
 
       //Count minutes
-      for(temp = 0; duration > 60; temp++)
+      for(minutes = 0; duration > 60; minutes++)
         duration -= 60;
-      if( duration )
-        cout << temp << "m";
 
-      //Print seconds
-      cout << duration << "s" << endl;
-    }
+      LOG(logDebug) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
+    }*/
   }
 
   delete w;

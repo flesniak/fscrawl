@@ -16,7 +16,6 @@ public:
   worker(sql::Connection* dbConnection = 0);
   ~worker();
 
-  enum logLevel { quiet, status, detailed, debug };
   struct statistics {
     uint32_t files;
     uint32_t directories;
@@ -47,7 +46,6 @@ public:
 
   void setConnection(sql::Connection* dbConnection);
   void setInheritance(bool inheritSize, bool inheritMTime);
-  void setLogLevel(logLevel level);
   void setTables(const string& directoryTable, const string& fileTable);
 
   const statistics& getStatistics() const;
@@ -80,7 +78,6 @@ private:
   void updateFile(uint32_t parent, uint64_t size, time_t mtime);
 
   string errnoString();
-  void log(const string& message, logLevel level);
 
   string p_basePath;
   bool p_databaseInitialized;
@@ -88,8 +85,6 @@ private:
   string p_fileTable;
   bool p_inheritMTime;
   bool p_inheritSize;
-  uint32_t p_lastLogLength;
-  logLevel p_logLevel;
   statistics p_statistics;
 
   sql::Connection* p_connection;

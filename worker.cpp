@@ -1,4 +1,5 @@
 #include "worker.h"
+#include "logger.h"
 
 #include <cerrno>
 #include <cstring>
@@ -13,7 +14,6 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_fileTable("fscrawl_files"),
                                                 p_inheritMTime(false),
                                                 p_inheritSize(true),
-                                                p_lastLogLength(0),
                                                 p_connection(dbConnection),
                                                 p_stmt(p_connection->createStatement()) {
   //p_prepare heavily used mysql functions
@@ -43,10 +43,10 @@ uint32_t worker::ascendPath(string path, entry_t::type_t type, bool createDirect
   if( !p_databaseInitialized )
     initDatabase();
   if( !path.empty() ) {
-    log("Ascending into specified path "+path,detailed);
+    LOG(logDetailed) << "Ascending into specified path " << path;
     while( !path.empty() ) {
       string pathElement = path.substr(0,path.find('/'));
-      log("getting path element "+pathElement,debug);
+      LOG(logDebug) << "Getting path element " << pathElement;
       path.erase(0,pathElement.length()+1); //erase pathElement and slash
       if( pathElement.empty() ) //strinheritedProperties leading and multinheritedPropertiesle slashes
         continue;
@@ -82,12 +82,8 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
     entry->size = res->getUInt64(3);
     entry->mtime = res->getUInt(4);
     entryCache.push_back(entry);
-    if( p_logLevel == debug) {
-      stringstream ss;
-      ss.str("");
-      ss << "cache: got dir id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
-      log(ss.str(),debug);
-    }
+    LOG(logDebug) << "cache: got dir id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
+
   }
   delete res;
 
@@ -103,21 +99,16 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
     entry->size = res->getUInt64(3);
     entry->mtime = res->getUInt(4);
     entryCache.push_back(entry);
-    if( p_logLevel == debug) {
-      stringstream ss;
-      ss.str("");
-      ss << "cache: got file id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
-      log(ss.str(),debug);
-    }
+    LOG(logDebug) << "cache: got file id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
   }
   delete res;
 }
 
 void worker::clearDatabase() {
-  log("Clearing database, dropping tables",status);
+  LOG(logWarning) << "Clearing database, dropping tables";
   p_stmt->execute("DROP TABLE "+p_fileTable);
   p_stmt->execute("DROP TABLE "+p_directoryTable);
-  log("ALL DATA IS NOW GONE",status);
+  LOG(logWarning) << "ALL DATA IS NOW GONE";
   p_databaseInitialized = false;
 }
 
@@ -219,7 +210,7 @@ const worker::statistics& worker::getStatistics() const {
 }
 
 void worker::initDatabase() {
-  log("create tables if not exists",debug); //create database tables in case they do not exist
+  LOG(logDebug) << "create tables if not exists"; //create database tables in case they do not exist
   p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_directoryTable+
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
                   "name VARCHAR(255) NOT NULL,"
@@ -243,12 +234,8 @@ void worker::initDatabase() {
 }
 
 uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
-  if( p_logLevel == debug ) {
-    stringstream ss;
-    ss << "inserting dir parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
-    log(ss.str(),debug);
-  } else
-    log("Adding directory "+name,detailed);
+  LOG(logDetailed) << "Adding directory " << name;
+  LOG(logDebug) << "inserting dir parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
 
   p_prepInsertDir->setString(1,name);
   p_prepInsertDir->setUInt(2,parent);
@@ -261,18 +248,14 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
   if( res->next() )
     dirId = res->getUInt(1);
   else
-    log("ERROR: Insert statement failed for "+name,quiet);
+    LOG(logError) << "ERROR: Insert statement failed for " << name;
   delete res;
   return dirId;
 }
 
 uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
-  if( p_logLevel == debug ) {
-    stringstream ss;
-    ss << "inserting file parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
-    log(ss.str(),debug);
-  } else
-    log("Adding file "+name,detailed);
+  LOG(logDetailed) << "Adding file " << name;
+  LOG(logDebug) << "inserting file parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
 
   p_prepInsertFile->setString(1,name);
   p_prepInsertFile->setUInt(2,parent);
@@ -285,15 +268,9 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
   if( res->next() )
     fileId = res->getUInt(1);
   else
-    log("ERROR: Insert statement failed for "+name,quiet);
+    LOG(logError) << "ERROR: Insert statement failed for " << name;
   delete res;
   return fileId;
-}
-
-inline void worker::log(const string& message, logLevel level) {
-  if( level <= p_logLevel )
-    cout << "V" << (uint32_t)level << ": " << message << endl;
-  p_lastLogLength = message.length();
 }
 
 worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_t id) {
@@ -306,7 +283,7 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
   inheritedProperties_t inheritedProperties = {0, 0};
   vector<entry_t*> entryCache;
 
-  log("Processing directory "+path,detailed);
+  LOG(logDetailed) << "Processing directory " << path;
 
   dir = opendir(path.c_str());
   if( dir == NULL ) {
@@ -314,20 +291,21 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
     return inheritedProperties;
   }
 
-  log("fetching directory entries from db for caching",debug);
+  LOG(logDebug) << "fetching directory entries from db for caching";
   cacheDirectoryEntriesFromDB(id, entryCache);
 
   while( ( dirEntry = readdir(dir) ) ) { //readdir returns NULL when "end" of directory is reached
     if( strcmp(dirEntry->d_name,".") == 0 || strcmp(dirEntry->d_name,"..") == 0 ) //don't process . and .. for obvious reasons
       continue;
     string dirEntryPath = path + "/" + dirEntry->d_name;
-    log("processing dirEntry "+dirEntryPath,debug);
+    LOG(logDebug) << "processing dirEntry " << dirEntryPath;
     if( stat64(dirEntryPath.c_str(), &dirEntryStat) ) {
       cout << "ERROR: stat() on " << dirEntryPath << " failed: " << errnoString() << endl;
       continue;
     }
+
     entry_t* entry = 0;
-    for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ )
+    for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) //try to get entry from cache
       if( (*it)->name == dirEntry->d_name ) {
         entry = *it;
         break;
@@ -391,7 +369,7 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
     }
   processChangedEntries(entryCache, entry_t::directory);
 
-  log("leaving directory "+path,debug);
+  LOG(logDebug) << "leaving directory " << path;
   closedir(dir);
   return inheritedProperties;
 }
@@ -424,7 +402,7 @@ worker::inheritedProperties_t worker::processChangedEntries(vector<entry_t*>& en
           break;
         }
         default : {
-          log("bug: unhandled entry_t::state",status);
+          LOG(logError) << "bug: unhandled entry_t::state";
           break;
         }
       }
@@ -451,7 +429,7 @@ worker::inheritedProperties_t worker::processChangedEntries(vector<entry_t*>& en
           break;
         }
         default : {
-          log("bug: unhandled entry_t::state",status);
+          LOG(logError) << "bug: unhandled entry_t::state";
           break;
         }
       }
@@ -472,10 +450,6 @@ void worker::setInheritance(bool inheritSize, bool inheritMTime) {
   p_inheritMTime = inheritMTime;
 }
 
-void worker::setLogLevel(logLevel level) {
-  p_logLevel = level;
-}
-
 void worker::setTables(const string& directoryTable, const string& fileTable) {
   p_directoryTable = directoryTable;
   p_fileTable = fileTable;
@@ -483,12 +457,8 @@ void worker::setTables(const string& directoryTable, const string& fileTable) {
 }
 
 void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
-  if( p_logLevel == debug ) {
-    stringstream ss;
-    ss << "updating dir id " << id << " size " << size << " mtime " << mtime;
-    log(ss.str(),debug);
-  } else
-    log("Updating directory id "+id,detailed);
+  LOG(logDetailed) << "Updating directory id " << id;
+  LOG(logDebug) << "updating dir id " << id << " size " << size << " mtime " << mtime;
   p_prepUpdateDir->setUInt64(1,size);
   p_prepUpdateDir->setUInt(2,mtime);
   p_prepUpdateDir->setUInt(3,id);
@@ -496,12 +466,8 @@ void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
 }
 
 void worker::updateFile(uint32_t id, uint64_t size, time_t mtime) {
-  if( p_logLevel == debug ) {
-    stringstream ss;
-    ss << "updating file id " << id << " size " << size << " mtime " << mtime;
-    log(ss.str(),debug);
-  } else
-    log("Updating file id "+id,detailed);
+  LOG(logDetailed) << "Updating file id " << id;
+  LOG(logDebug) << "updating file id " << id << " size " << size << " mtime " << mtime;
   p_prepUpdateDir->setUInt64(1,size);
   p_prepUpdateDir->setUInt(2,mtime);
   p_prepUpdateDir->setUInt(3,id);
@@ -517,7 +483,7 @@ void worker::verifyTree() {
   map<uint32_t,uint32_t>::iterator cacheIterator;
   sql::PreparedStatement *p_prepGetDirParent = p_connection->prepareStatement("SELECT parent FROM "+p_directoryTable+" WHERE id=?");
 
-  log("Verifying directories",detailed);
+  LOG(logDetailed) << "Verifying directories";
   sql::ResultSet *res = p_stmt->executeQuery("SELECT id,parent FROM "+p_directoryTable);
   while( res->next() ) { //loop through all directories
     uint32_t id = res->getUInt(1);
@@ -526,23 +492,17 @@ void worker::verifyTree() {
       continue;
     //now we check if we can find the given parent of id
     if( (cacheIterator = parentIdCache.find(parent)) != parentIdCache.end() ) { //we already know this parent, it's valid!
-      stringstream ss;
-      ss << "found parent " << parent << " of id " << id << " in cache, valid";
-      log(ss.str(),debug);
+      LOG(logDebug) << "found parent " << parent << " of id " << id << " in cache, valid";
       parentIdCache[id] = parent;
     } else { //we dont know that parent yet, ask the database
       p_prepGetDirParent->setUInt(1,parent);
       sql::ResultSet *parentQueryResult = p_prepGetDirParent->executeQuery();
       if( parentQueryResult->next() ) { //parent exists, cache it - saves us query time on the files later on
-        stringstream ss;
-        ss << "found parent " << parent << " of id " << id << " in database, caching it, valid";
-        log(ss.str(),debug);
+        LOG(logDebug) << "found parent " << parent << " of id " << id << " in database, caching it, valid";
         parentIdCache[id] = parent;
         parentIdCache[parent] = parentQueryResult->getUInt(1);
       } else {
-        stringstream ss;
-        ss << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree!";
-        log(ss.str(),status);
+        LOG(logWarning) << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree!";
         deleteDirectory(id);
         //now we have to remove possibly incorrectly cached ids
         uint32_t tempParentId = id;
@@ -550,11 +510,6 @@ void worker::verifyTree() {
       }
       delete parentQueryResult;
     }
-    
-    
-    
-    
-    
     p_prepGetDirParent->setUInt(1,parent);
     sql::ResultSet *parentQueryResult = p_prepGetDirParent->executeQuery();
     if( parentQueryResult->next() ) { //parent exists, cache it - saves us query time on the files later on
@@ -562,16 +517,14 @@ void worker::verifyTree() {
       parentIdCache[parent] = parentQueryResult->getUInt(1);
     }
     else {
-      stringstream ss;
-      ss << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree!";
-      log(ss.str(),status);
+      LOG(logWarning) << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree!";
       deleteDirectory(id);
     }
     delete parentQueryResult;
   }
   delete res;
 
-  log("Verifying files",debug);
+  LOG(logDetailed) << "Verifying files";
   res = p_stmt->executeQuery("SELECT id,parent FROM "+p_fileTable);
   while( res->next() ) {
     uint32_t id = res->getUInt(1);

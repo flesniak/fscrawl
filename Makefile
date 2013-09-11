@@ -5,15 +5,17 @@ EXECUTABLE=fscrawl
 
 all: fscrawl
 
-release: fscrawl
+release: fscrawl.o logger.o worker.o
 	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release fscrawl.o worker.o
 
-fscrawl: fscrawl.o worker.o
-	$(CC) $(LDFLAGS) -o $(EXECUTABLE) fscrawl.o worker.o
+fscrawl: fscrawl.o logger.o worker.o
+	$(CC) $(LDFLAGS) -o $(EXECUTABLE) fscrawl.o logger.o worker.o
 
 fscrawl.o: fscrawl.cpp worker.o
 	$(CC) $(CFLAGS) fscrawl.cpp
 
-worker.o: worker.cpp
-	$(CC) $(CFLAGS) worker.cpp
+logger.o: logger.cpp
+	$(CC) $(CFLAGS) logger.cpp
 
+worker.o: worker.cpp logger.o
+	$(CC) $(CFLAGS) worker.cpp
