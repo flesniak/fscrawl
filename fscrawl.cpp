@@ -26,7 +26,7 @@ void usage() {
   cout << "  -q, --quiet\tOnly display severe errors. Useful for cron-jobbing";
   cout << "The following options may be called without a basedir, then no scanning will be done:";
   cout << "  -c, --clear\tDelete the tree for this fakepath, others will be kept";
-  cout << "  -C, --clearall\tClear the database - ALL DATA WILL BE DELETED";
+  cout << "  -C, --clearall\tClear both tables completely";
   cout << "  -V, --verify\tVerify the tree structure - takes some time";
   cout << "fscrawl version "VERSION;
 }
@@ -180,6 +180,7 @@ int main(int argc, char* argv[]) {
   con->setSchema(mysql_database);
 
   worker* w = new worker(con);
+  LOG(logDebug) << "tables " << directoryTable << " " << fileTable;
   w->setTables(directoryTable,fileTable);
 
   if( clear == clearAll ) {
@@ -191,31 +192,24 @@ int main(int argc, char* argv[]) {
   if( !basedir.empty() ) {
     //ascend to given fakepath
     uint32_t fakepathId = w->ascendPath(fakepath);
-    cout << "fakepathId " << fakepathId;
+    LOG(logDebug) << "got fakepathId " << fakepathId;
 
     if( clear == clearFakepath )
       w->deleteDirectory(fakepathId);
-    /*//Save starting time
+    //Save starting time
     LOG(logDebug) << "starting parser";
     time_t start = time(0);
 
     w->parseDirectory(basedir, fakepathId);
 
     //Get time now, calculate and output duration
-    double duration = difftime(start,time(0));
-    if( logLevel > worker::quiet ) {
-      unsigned int hours, minutes;
-
-      //Count hours
-      for(hours = 0; duration > 3600; hours++)
-        duration -= 3600;
-
-      //Count minutes
-      for(minutes = 0; duration > 60; minutes++)
-        duration -= 60;
-
-      LOG(logDebug) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
-    }*/
+    double duration = difftime(time(0),start);
+    unsigned int hours, minutes;
+    for(hours = 0; duration > 3600; hours++) //Count hours
+      duration -= 3600;
+    for(minutes = 0; duration > 60; minutes++) //Count minutes
+      duration -= 60;
+    LOG(logDebug) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
   }
 
   delete w;

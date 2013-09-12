@@ -1,7 +1,6 @@
 #ifndef WORKER_H
 #define WORKER_H
 
-#include <map>
 #include <string>
 #include <vector>
 
@@ -19,20 +18,6 @@ public:
   struct statistics {
     uint32_t files;
     uint32_t directories;
-  };
-  struct inheritedProperties_t {
-    uint64_t size;
-    time_t mtime;
-    void inherit(uint64_t size, time_t mtime) {
-      this->size += size;
-      if( mtime > this->mtime )
-        this->mtime = mtime;
-    };
-    void operator+=(const inheritedProperties_t& t) {
-      size += t.size;
-      if( t.mtime > mtime )
-        mtime = t.mtime;
-    };
   };
   struct entry_t {
     uint32_t id;
@@ -61,7 +46,7 @@ public:
   //The worker traces the path from id up to the base (including a faked path)
   string descendPath(uint32_t id, entry_t::type_t type);
   //Start to parse the directory path. path will be stripped from the files' path. If you want a path, use fakepath
-  inheritedProperties_t parseDirectory(const string& path, uint32_t id = 0);
+  void parseDirectory(const string& path, uint32_t id = 0);
   //Verify the tree consistency. Resource hungry!
   void verifyTree();
 
@@ -73,9 +58,11 @@ private:
   entry_t getFileById(uint32_t id);
   entry_t getFileByName(const string& name, uint32_t parent);
   void initDatabase();
+  void inheritProperties(entry_t* parent, const entry_t* entry) const;
   uint32_t insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime);
   uint32_t insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime);
-  inheritedProperties_t processChangedEntries(vector<entry_t*>& entries, entry_t::type_t type = entry_t::any);
+  void parseDirectory(const string& path, entry_t* ownEntry);
+  void processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry);
   void updateDirectory(uint32_t parent, uint64_t size, time_t mtime);
   void updateFile(uint32_t parent, uint64_t size, time_t mtime);
 
