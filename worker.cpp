@@ -45,7 +45,7 @@ uint32_t worker::ascendPath(string path, entry_t::type_t type, bool createDirect
       string pathElement = path.substr(0,path.find('/'));
       LOG(logDebug) << "Getting path element " << pathElement;
       path.erase(0,pathElement.length()+1); //erase pathElement and slash
-      if( pathElement.empty() ) //strinheritedProperties leading and multinheritedPropertiesle slashes
+      if( pathElement.empty() ) //strip leading and multiple slashes
         continue;
       entry_t subEntry = getDirectoryByName(pathElement,pathId);
       if( subEntry.id == 0 ) { //directory not found
@@ -80,7 +80,6 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
     entry->mtime = res->getUInt(4);
     entryCache.push_back(entry);
     LOG(logDebug) << "cache: got dir id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
-
   }
   delete res;
 
@@ -110,6 +109,7 @@ void worker::clearDatabase() {
 }
 
 void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" including all subdirs/files
+  LOG(logDebug) << "deleting directory id " << id;
   p_prepQueryDirsByParent->setUInt(1,id);
   sql::ResultSet *res = p_prepQueryDirsByParent->executeQuery();
   while( res->next() )
@@ -122,6 +122,7 @@ void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" i
 }
 
 void worker::deleteFile(uint32_t id) {
+  LOG(logDebug) << "deleting file id " << id;
   p_prepDeleteFile->setUInt(1,id);
   p_prepDeleteFile->execute();
 }
@@ -211,7 +212,7 @@ void worker::initDatabase() {
   p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_directoryTable+
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
                   "name VARCHAR(255) NOT NULL,"
-                  "parent INT UNSIGNED NOT NULL,"
+                  "parent INT UNSIGNED DEFAULT NULL,"
                   "size BIGINT UNSIGNED,"
                   "date DATETIME DEFAULT NULL,"
                   "INDEX(parent))"
@@ -220,7 +221,7 @@ void worker::initDatabase() {
   p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_fileTable+
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
                   "name VARCHAR(255) NOT NULL,"
-                  "parent INT UNSIGNED NOT NULL,"
+                  "parent INT UNSIGNED DEFAULT NULL,"
                   "size BIGINT UNSIGNED,"
                   "date DATETIME DEFAULT NULL,"
                   "INDEX(parent))"
@@ -263,11 +264,19 @@ void worker::initDatabase() {
 
   p_statistics.files = 0;
   p_statistics.directories = 0;
+  
+  p_databaseInitialized = true;
+}
+
+inline void worker::inheritProperties(entry_t* parent, const entry_t* entry) const {
+  if( p_inheritSize )
+    parent->size += entry->size;
+  if( p_inheritMTime && parent->mtime < entry->mtime )
+    parent->mtime = entry->mtime;
 }
 
 uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
   LOG(logDetailed) << "Adding directory " << name;
-  LOG(logDebug) << "inserting dir parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
 
   p_prepInsertDir->setString(1,name);
   p_prepInsertDir->setUInt(2,parent);
@@ -275,19 +284,19 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
   p_prepInsertDir->setUInt(4,mtime);
   p_prepInsertDir->execute();
 
-  uint32_t dirId = 0;
+  uint32_t id = 0;
   sql::ResultSet* res = p_prepLastInsertID->executeQuery();
   if( res->next() )
-    dirId = res->getUInt(1);
+    id = res->getUInt(1);
   else
     LOG(logError) << "ERROR: Insert statement failed for " << name;
   delete res;
-  return dirId;
+  LOG(logDebug) << "inserted dir id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
+  return id;
 }
 
 uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
   LOG(logDetailed) << "Adding file " << name;
-  LOG(logDebug) << "inserting file parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
 
   p_prepInsertFile->setString(1,name);
   p_prepInsertFile->setUInt(2,parent);
@@ -295,36 +304,46 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
   p_prepInsertFile->setUInt(4,mtime);
   p_prepInsertFile->execute();
 
-  uint32_t fileId = 0;
+  uint32_t id = 0;
   sql::ResultSet* res = p_prepLastInsertID->executeQuery();
   if( res->next() )
-    fileId = res->getUInt(1);
+    id = res->getUInt(1);
   else
     LOG(logError) << "ERROR: Insert statement failed for " << name;
   delete res;
-  return fileId;
+  LOG(logDebug) << "inserted file file id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
+  return id;
 }
 
-worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_t id) {
+void worker::parseDirectory(const string& path, uint32_t id) {
+//   entry_t e = { id, 0, string(), 0, 0, entry_t::entryOk, entry_t::directory };
+  entry_t e = getDirectoryById(id);
+  parseDirectory(path, &e);
+}
+
+void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   if( !p_databaseInitialized )
     initDatabase();
 
   DIR* dir; //directory pointer
   struct dirent* dirEntry; //directory entry
   struct stat64 dirEntryStat; //directory's stat
-  inheritedProperties_t inheritedProperties = {0, 0};
   vector<entry_t*> entryCache;
+
+  uint64_t saveSize = ownEntry->size;
+  ownEntry->size = 0; //set size to zero, will be counted and compared to saveSize afterwards
+  time_t saveMTime = ownEntry->mtime;
 
   LOG(logDetailed) << "Processing directory " << path;
 
   dir = opendir(path.c_str());
   if( dir == NULL ) {
-    cout << "ERROR: failed to read directory " << path << ": " << errnoString() << endl;
-    return inheritedProperties;
+    LOG(logError) << "ERROR: failed to read directory " << path << ": " << errnoString();
+    return;
   }
 
   LOG(logDebug) << "fetching directory entries from db for caching";
-  cacheDirectoryEntriesFromDB(id, entryCache);
+  cacheDirectoryEntriesFromDB(ownEntry->id, entryCache);
 
   while( ( dirEntry = readdir(dir) ) ) { //readdir returns NULL when "end" of directory is reached
     if( strcmp(dirEntry->d_name,".") == 0 || strcmp(dirEntry->d_name,"..") == 0 ) //don't process . and .. for obvious reasons
@@ -332,7 +351,7 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
     string dirEntryPath = path + "/" + dirEntry->d_name;
     LOG(logDebug) << "processing dirEntry " << dirEntryPath;
     if( stat64(dirEntryPath.c_str(), &dirEntryStat) ) {
-      cout << "ERROR: stat() on " << dirEntryPath << " failed: " << errnoString() << endl;
+      LOG(logError) << "ERROR: stat() on " << dirEntryPath << " failed: " << errnoString() << endl;
       continue;
     }
 
@@ -359,7 +378,7 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
       else
         entry->type = entry_t::file;
       entry->id = 0;
-      entry->parent = id;
+      entry->parent = ownEntry->id;
       entry->name = dirEntry->d_name;
       entry->mtime = dirEntryStat.st_mtime;
       entry->size = dirEntryStat.st_size;
@@ -369,7 +388,7 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
         entry->size = dirEntryStat.st_size;
         entry->state = entry_t::entryPropertiesChanged;
       }
-      if( entry->mtime != dirEntryStat.st_mtime && ( entry->type == entry_t::file || !p_inheritSize ) ) {
+      if( entry->mtime != dirEntryStat.st_mtime && ( entry->type == entry_t::file || !p_inheritMTime ) ) {
         entry->mtime = dirEntryStat.st_mtime;
         entry->state = entry_t::entryPropertiesChanged;
       }
@@ -384,37 +403,36 @@ worker::inheritedProperties_t worker::parseDirectory(const string& path, uint32_
   }
 
   //adds size, updates mtime if larger
-  inheritedProperties += processChangedEntries(entryCache, entry_t::file);
-  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ )
-    if( (*it)->type == entry_t::directory ) {
-      inheritedProperties_t inheritedProperties = parseDirectory(path + "/" + (*it)->name, (*it)->id);
-      if( p_inheritSize ) {
-        (*it)->size = inheritedProperties.size;
-        inheritedProperties.size += inheritedProperties.size;
-      }
-      if( p_inheritMTime ) {
-        if( (*it)->mtime > inheritedProperties.mtime )
-          (*it)->mtime = inheritedProperties.mtime;
-        if( inheritedProperties.mtime > inheritedProperties.mtime )
-          inheritedProperties.mtime += inheritedProperties.mtime;
-      }
-    }
-  processChangedEntries(entryCache, entry_t::directory);
+  processChangedEntries(entryCache, ownEntry); //add new files, also insert directories, but mark them to be updated later on
+  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); ) { //we do not need any file entry_t anymore, just keep directories
+    LOG(logDebug) << "iterating over " << (*it)->id << " name " << (*it)->name;
+    if( (*it)->type != entry_t::directory ) {
+      LOG(logDebug) << "deleting non-directory id " << (*it)->id << " name " << (*it)->name;
+      delete *it;
+      it = entryCache.erase(it);
+    } else
+      it++;
+  }
+  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) { //only directories left
+    parseDirectory(path + "/" + (*it)->name, *it);
+    inheritProperties(ownEntry, *it);
+  }
+  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) //we do not need any file entry_t anymore, just keep directories
+    delete *it; //do not have to call entryCache::erase, it will be deleted anyway
+
+  if( saveSize != ownEntry->size || saveMTime != ownEntry->mtime )
+    updateDirectory(ownEntry->id, ownEntry->size, ownEntry->mtime);
 
   LOG(logDebug) << "leaving directory " << path;
   closedir(dir);
-  return inheritedProperties;
 }
 
-worker::inheritedProperties_t worker::processChangedEntries(vector<entry_t*>& entries, entry_t::type_t type) {
-  inheritedProperties_t inheritedProperties = {0, 0};
+void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry) {
+  LOG(logDebug) << "processChangedEntries()";
   vector<entry_t*>::iterator it = entries.begin();
   while( it != entries.end() ) {
-    if( type != entry_t::any && (*it)->type != type ) {
-      it++;
-      continue;
-    }
 
+    //handle directories
     if( (*it)->type == entry_t::directory )
       switch( (*it)->state ) {
         case entry_t::entryOk : {
@@ -425,7 +443,8 @@ worker::inheritedProperties_t worker::processChangedEntries(vector<entry_t*>& en
           break;
         }
         case entry_t::entryNew : {
-          insertDirectory( (*it)->id, (*it)->name, (*it)->size, (*it)->mtime );
+          (*it)->id = insertDirectory( (*it)->parent, (*it)->name, (*it)->size, (*it)->mtime );
+          (*it)->state = entry_t::entryPropertiesChanged; //flag for property update after parsing, do not erase
           break;
         }
         case entry_t::entryUnknown : //continue to entryDeleted
@@ -439,20 +458,21 @@ worker::inheritedProperties_t worker::processChangedEntries(vector<entry_t*>& en
         }
       }
 
-    if( (*it)->type == entry_t::file ) {
+    //handle files
+    if( (*it)->type == entry_t::file )
       switch( (*it)->state ) {
         case entry_t::entryOk : {
-          inheritedProperties.inherit( (*it)->size, (*it)->mtime );
+          inheritProperties(parentEntry, *it);
           break;
         }
         case entry_t::entryPropertiesChanged : {
           updateFile( (*it)->id, (*it)->size, (*it)->mtime );
-          inheritedProperties.inherit( (*it)->size, (*it)->mtime );
+          inheritProperties(parentEntry, *it);
           break;
         }
         case entry_t::entryNew : {
-          insertFile( (*it)->id, (*it)->name, (*it)->size, (*it)->mtime );
-          inheritedProperties.inherit( (*it)->size, (*it)->mtime );
+          (*it)->id = insertFile( (*it)->parent, (*it)->name, (*it)->size, (*it)->mtime );
+          inheritProperties(parentEntry, *it);
           break;
         }
         case entry_t::entryUnknown : //continue to entryDeleted
@@ -465,11 +485,9 @@ worker::inheritedProperties_t worker::processChangedEntries(vector<entry_t*>& en
           break;
         }
       }
-    }
 
-    entries.erase(it);
+    it++;
   }
-  return inheritedProperties;
 }
 
 void worker::setConnection(sql::Connection* dbConnection) {
