@@ -1,10 +1,12 @@
 #include "worker.h"
 #include "logger.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
-#include <sstream>
 #include <iostream>
+#include <list>
+#include <sstream>
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -531,63 +533,58 @@ void worker::updateFile(uint32_t id, uint64_t size, time_t mtime) {
 void worker::verifyTree() {
   if( !p_databaseInitialized )
     initDatabase();
-  map<uint32_t,uint32_t> parentIdCache; // <id, parent> key are directory ids, value is the directories parent id
-  map<uint32_t,uint32_t>::iterator cacheIterator;
-  sql::PreparedStatement *p_prepGetDirParent = p_connection->prepareStatement("SELECT parent FROM "+p_directoryTable+" WHERE id=?");
+  list<uint32_t>* idCache = new list<uint32_t>; //contains valid ids that have a connection to parent 0
+  list<uint32_t>::iterator cacheIterator;
+  sql::PreparedStatement *prepGetDirParent = p_connection->prepareStatement("SELECT parent FROM "+p_directoryTable+" WHERE id=?");
 
   LOG(logDetailed) << "Verifying directories";
-  sql::ResultSet *res = p_stmt->executeQuery("SELECT id,parent FROM "+p_directoryTable);
+  sql::ResultSet* res = p_stmt->executeQuery("SELECT id,parent FROM "+p_directoryTable);
   while( res->next() ) { //loop through all directories
     uint32_t id = res->getUInt(1);
     uint32_t parent = res->getUInt(2);
-    if( parent == 0 ) //parent 0 is always valid
-      continue;
+    uint32_t tempId = id; //id-parent pairs used to trace up until they are either found in idCache or tempParentId gets zero
+    uint32_t tempParentId = parent;
+    list<uint32_t> tempIdCache;
     //now we check if we can find the given parent of id
-    if( (cacheIterator = parentIdCache.find(parent)) != parentIdCache.end() ) { //we already know this parent, it's valid!
-      LOG(logDebug) << "found parent " << parent << " of id " << id << " in cache, valid";
-      parentIdCache[id] = parent;
-    } else { //we dont know that parent yet, ask the database
-      p_prepGetDirParent->setUInt(1,parent);
-      sql::ResultSet *parentQueryResult = p_prepGetDirParent->executeQuery();
-      if( parentQueryResult->next() ) { //parent exists, cache it - saves us query time on the files later on
-        LOG(logDebug) << "found parent " << parent << " of id " << id << " in database, caching it, valid";
-        parentIdCache[id] = parent;
-        parentIdCache[parent] = parentQueryResult->getUInt(1);
+    while( tempParentId != 0 || find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
+      prepGetDirParent->setUInt(1,tempParentId);
+      sql::ResultSet *parentQueryResult = prepGetDirParent->executeQuery();
+      if( parentQueryResult->next() ) {
+        LOG(logDebug) << "found ancestor " << tempId << " of id " << id << " in database, continueing trace";
+        tempId = tempParentId;
+        tempParentId = parentQueryResult->getUInt(1);
+        tempIdCache.push_back(tempId); //tempId was found in the database, so it's a valid parent (if we are able to complete the trace)
       } else {
-        LOG(logWarning) << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree!";
-        deleteDirectory(id);
-        //now we have to remove possibly incorrectly cached ids
-        uint32_t tempParentId = id;
-        // TODO
+        LOG(logWarning) << "Parent " << tempParentId << " of directory " << tempId << " does not exist. Deleting that subtree!";
+        deleteDirectory(tempId); //we do not have to remove incorrectly cached ids though we did not cache invalid ones
+        tempId = 0; //indicate failure
+        tempParentId = 0;
+      }
+      if( tempParentId == id ) { //loop detection
+        LOG(logWarning) << "Detected loop between " << tempParentId << " and " << id;
+        deleteDirectory(id); //will delete a loop reliably
+        tempId = 0; //indicate failure
+        tempParentId = 0;
       }
       delete parentQueryResult;
     }
-    p_prepGetDirParent->setUInt(1,parent);
-    sql::ResultSet *parentQueryResult = p_prepGetDirParent->executeQuery();
-    if( parentQueryResult->next() ) { //parent exists, cache it - saves us query time on the files later on
-      parentIdCache[id] = parent;
-      parentIdCache[parent] = parentQueryResult->getUInt(1);
-    }
-    else {
-      LOG(logWarning) << "Parent " << parent << " of directory " << id << " does not exist. Deleting that subtree!";
-      deleteDirectory(id);
-    }
-    delete parentQueryResult;
+    if( tempId != 0 ) //only cache if valid
+      idCache->merge(tempIdCache); //cache all temporary ids as the trace is okay
   }
   delete res;
+  delete prepGetDirParent;
 
   LOG(logDetailed) << "Verifying files";
   res = p_stmt->executeQuery("SELECT id,parent FROM "+p_fileTable);
   while( res->next() ) {
     uint32_t id = res->getUInt(1);
     uint32_t parent = res->getUInt(2);
-    if( parent == 0 || parentIdCache.count(parent) == 0 ) {
-      stringstream ss;
-      ss << "Parent " << parent << " of file " << id << " does not exist. Deleting that file";
-      ss.str("");
-      ss << "DELETE FROM "+p_fileTable+" WHERE id=" << id;
-      p_stmt->executeQuery(ss.str());
+    if( parent == 0 || find(idCache->begin(), idCache->end(), parent) == idCache->end() ) {
+      LOG(logWarning) << "Parent " << parent << " of file " << id << " does not exist. Deleting that file";
+      p_prepDeleteFile->setUInt(1,id); 
+      p_prepDeleteFile->execute();
     }
   }
   delete res;
+  delete idCache;
 }
