@@ -174,30 +174,38 @@ int main(int argc, char* argv[]) {
 
   Logger::facility() = new LoggerFacilityConsole;
 
-  LOG(logDebug) << "initializing sql driver";
+  LOG(logInfo) << "Connecting to SQL server";
   sql::Driver *driver = get_driver_instance();
   sql::Connection *con = driver->connect(mysql_host,mysql_user,mysql_password);
   con->setSchema(mysql_database);
 
+  LOG(logDebug) << "setting up worker";
   worker* w = new worker(con);
-  LOG(logDebug) << "tables " << directoryTable << " " << fileTable;
   w->setTables(directoryTable,fileTable);
 
   if( clear == clearAll ) {
+    LOG(logWarning) << "Clearing database";
     w->clearDatabase();
   }
   if( verify ) {
+    LOG(logInfo) << "Verifying tree";
     w->verifyTree();
   }
   if( !basedir.empty() ) {
     //ascend to given fakepath
-    uint32_t fakepathId = w->ascendPath(fakepath);
-    LOG(logDebug) << "got fakepathId " << fakepathId;
+    uint32_t fakepathId = 0;
+    if( !fakepath.empty() ) {
+      LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
+      fakepathId = w->ascendPath(fakepath);
+      LOG(logDebug) << "got fakepathId " << fakepathId;
+      if( clear == clearFakepath ) {
+        LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
+        w->deleteDirectory(fakepathId);
+      }
+    }
 
-    if( clear == clearFakepath )
-      w->deleteDirectory(fakepathId);
     //Save starting time
-    LOG(logDebug) << "starting parser";
+    LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
     time_t start = time(0);
 
     w->parseDirectory(basedir, fakepathId);
@@ -209,7 +217,7 @@ int main(int argc, char* argv[]) {
       duration -= 3600;
     for(minutes = 0; duration > 60; minutes++) //Count minutes
       duration -= 60;
-    LOG(logDebug) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
+    LOG(logInfo) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
   }
 
   delete w;

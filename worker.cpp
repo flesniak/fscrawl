@@ -103,10 +103,9 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
 }
 
 void worker::clearDatabase() {
-  LOG(logWarning) << "Clearing database, dropping tables";
   p_stmt->execute("DROP TABLE "+p_fileTable);
   p_stmt->execute("DROP TABLE "+p_directoryTable);
-  LOG(logWarning) << "ALL DATA IS NOW GONE";
+  LOG(logWarning) << "Database tables dropped, data is now gone";
   p_databaseInitialized = false;
 }
 
@@ -266,7 +265,7 @@ void worker::initDatabase() {
 
   p_statistics.files = 0;
   p_statistics.directories = 0;
-  
+
   p_databaseInitialized = true;
 }
 
@@ -278,7 +277,7 @@ inline void worker::inheritProperties(entry_t* parent, const entry_t* entry) con
 }
 
 uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
-  LOG(logDetailed) << "Adding directory " << name;
+  LOG(logInfo) << "Adding directory \"" << name << '\"';
 
   p_prepInsertDir->setString(1,name);
   p_prepInsertDir->setUInt(2,parent);
@@ -298,7 +297,7 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
 }
 
 uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
-  LOG(logDetailed) << "Adding file " << name;
+  LOG(logInfo) << "Adding file \"" << name << '\"';
 
   p_prepInsertFile->setString(1,name);
   p_prepInsertFile->setUInt(2,parent);
@@ -407,9 +406,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   //adds size, updates mtime if larger
   processChangedEntries(entryCache, ownEntry); //add new files, also insert directories, but mark them to be updated later on
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); ) { //we do not need any file entry_t anymore, just keep directories
-    LOG(logDebug) << "iterating over " << (*it)->id << " name " << (*it)->name;
     if( (*it)->type != entry_t::directory ) {
-      LOG(logDebug) << "deleting non-directory id " << (*it)->id << " name " << (*it)->name;
       delete *it;
       it = entryCache.erase(it);
     } else
@@ -511,7 +508,7 @@ void worker::setTables(const string& directoryTable, const string& fileTable) {
 }
 
 void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
-  LOG(logDetailed) << "Updating directory id " << id;
+  LOG(logInfo) << "Updating directory id " << id;
   LOG(logDebug) << "updating dir id " << id << " size " << size << " mtime " << mtime;
   p_prepUpdateDir->setUInt64(1,size);
   p_prepUpdateDir->setUInt(2,mtime);
@@ -520,7 +517,7 @@ void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
 }
 
 void worker::updateFile(uint32_t id, uint64_t size, time_t mtime) {
-  LOG(logDetailed) << "Updating file id " << id;
+  LOG(logInfo) << "Updating file id " << id;
   LOG(logDebug) << "updating file id " << id << " size " << size << " mtime " << mtime;
   p_prepUpdateDir->setUInt64(1,size);
   p_prepUpdateDir->setUInt(2,mtime);
@@ -545,12 +542,25 @@ void worker::verifyTree() {
     uint32_t tempId = id; //id-parent pairs used to trace up until they are either found in idCache or tempParentId gets zero
     uint32_t tempParentId = parent;
     list<uint32_t> tempIdCache;
+    LOG(logDebug) << "Verify: id " << id << " parent " << parent;
+    if( id == parent ) {
+      LOG(logWarning) << "id " << id << " is it's own parent. Deleting!";
+      tempId = 0; //indicate failure
+      tempParentId = 0;
+      stringstream ss;
+      ss << "DELETE FROM " << p_directoryTable << " WHERE parent=" << id;
+      p_stmt->execute(ss.str());
+      p_prepDeleteFiles->setUInt(1,id); //delete all files with parent "id"
+      p_prepDeleteFiles->execute();
+    }
+    tempIdCache.push_back(id); //pre-cache id in case it may be valid
     //now we check if we can find the given parent of id
-    while( tempParentId != 0 || find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
+    while( tempParentId != 0 && find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
+      LOG(logDebug) << "Ancestor: id " << tempId << " parent " << tempParentId;
       prepGetDirParent->setUInt(1,tempParentId);
       sql::ResultSet *parentQueryResult = prepGetDirParent->executeQuery();
       if( parentQueryResult->next() ) {
-        LOG(logDebug) << "found ancestor " << tempId << " of id " << id << " in database, continueing trace";
+        LOG(logDebug) << "found ancestor id " << tempParentId << " of id " << id << " in database, continueing trace";
         tempId = tempParentId;
         tempParentId = parentQueryResult->getUInt(1);
         tempIdCache.push_back(tempId); //tempId was found in the database, so it's a valid parent (if we are able to complete the trace)
@@ -561,13 +571,14 @@ void worker::verifyTree() {
         tempParentId = 0;
       }
       if( tempParentId == id ) { //loop detection
-        LOG(logWarning) << "Detected loop between " << tempParentId << " and " << id;
+        LOG(logWarning) << "Detected loop between id " << tempId << " and id " << id;
         deleteDirectory(id); //will delete a loop reliably
         tempId = 0; //indicate failure
         tempParentId = 0;
       }
       delete parentQueryResult;
     }
+    LOG(logDebug) << "Traceback complete, tempId " << tempId << " tempParentId " << tempParentId;
     if( tempId != 0 ) //only cache if valid
       idCache->merge(tempIdCache); //cache all temporary ids as the trace is okay
   }

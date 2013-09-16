@@ -6,7 +6,6 @@
 
 #include <cppconn/driver.h>
 #include <cppconn/prepared_statement.h>
-#include <mysql_connection.h>
 
 using namespace std;
 
