@@ -19,3 +19,6 @@ logger.o: logger.cpp
 
 worker.o: worker.cpp logger.o
 	$(CC) $(CFLAGS) worker.cpp
+
+clean:
+	rm -f *.o fscrawl fscrawl-release
