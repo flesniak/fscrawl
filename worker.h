@@ -2,6 +2,7 @@
 #define WORKER_H
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cppconn/driver.h>
@@ -24,6 +25,7 @@ public:
     string name;
     uint32_t parent;
     uint64_t size;
+    uint64_t subSize; //used to calculate the size of directories
     enum state_t { entryUnknown, entryOk, entryDeleted, entryPropertiesChanged, entryNew } state;
     enum type_t { file, directory, any } type;
   };
@@ -44,26 +46,35 @@ public:
   void deleteFile(uint32_t id);
   //The worker traces the path from id up to the base (including a faked path)
   string descendPath(uint32_t id, entry_t::type_t type);
-  //Start to parse the directory path. path will be stripped from the files' path. If you want a path, use fakepath
+  //Start to parse the directory path. path will be stripped from the files' path. Will be inserted under parent "id".
   void parseDirectory(const string& path, uint32_t id = 0);
   //Verify the tree consistency. Resource hungry!
   void verifyTree();
+  //Watches the directory id including subdirectories
+  void watch(const string& path, uint32_t id = 0);
 
 private:
   void cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache);
   void cacheParent(uint32_t id, uint32_t parent);
-  entry_t getDirectoryById(uint32_t id);
-  entry_t getDirectoryByName(const string& name, uint32_t parent);
-  entry_t getFileById(uint32_t id);
-  entry_t getFileByName(const string& name, uint32_t parent);
+  //These functions access the database and get their stored properties.
+  entry_t getDirectoryById(uint32_t id); //returns an empty entry_t.name on failure
+  entry_t getDirectoryByName(const string& name, uint32_t parent); //returns entry_t.id = 0 on failure
+  entry_t getFileById(uint32_t id); //returns an empty entry_t.name on failure
+  entry_t getFileByName(const string& name, uint32_t parent); //returns entry_t.id = 0 on failure
   void initDatabase();
   void inheritProperties(entry_t* parent, const entry_t* entry) const;
   uint32_t insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime);
   uint32_t insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime);
+  //parses everything inside path, uses the id specified in ownEntry. size and mtime of contents will be updates into ownEntry as well. does not change the directory itself in the db
   void parseDirectory(const string& path, entry_t* ownEntry);
   void processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry);
-  void updateDirectory(uint32_t parent, uint64_t size, time_t mtime);
-  void updateFile(uint32_t parent, uint64_t size, time_t mtime);
+  //tries to read a file or directory at the specified path and returns its properties (name, size, mtime) in an entry_t
+  entry_t readPath(const string& path); //returns entry_t.state = entry_t::entryOk/entryUnknown on success/failure
+  void removeWatches(uint32_t id);
+  void setupWatches(const string& path, uint32_t id);
+  void updateDirectory(uint32_t id, uint64_t size, time_t mtime);
+  void updateFile(uint32_t id, uint64_t size, time_t mtime);
+  void updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime);
 
   string errnoString();
 
@@ -74,6 +85,8 @@ private:
   bool p_inheritMTime;
   bool p_inheritSize;
   statistics p_statistics;
+  int p_watchDescriptor;
+  map< int, pair<uint32_t,string> > p_watches; //stores inotify watch descriptors and their corresponding ids and paths
 
   sql::Connection* p_connection;
   sql::PreparedStatement* p_prepQueryFileById;

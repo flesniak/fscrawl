@@ -24,6 +24,7 @@ void usage() {
   cout << "  --dir-table\tTable to use for directories (default: \"fscrawl_directories\")";
   cout << "  -v, --verbose\tIncrease log level (0x=info,1x=detailed,2x=debug)";
   cout << "  -q, --quiet\tOnly display severe errors. Useful for cron-jobbing";
+  cout << "  -w, --watch\tWatch the given basedir after refreshing (program will block)";
   cout << "The following options may be called without a basedir, then no scanning will be done:";
   cout << "  -c, --clear\tDelete the tree for this fakepath, others will be kept";
   cout << "  -C, --clearall\tClear both tables completely";
@@ -33,6 +34,7 @@ void usage() {
 
 int main(int argc, char* argv[]) {
   bool verify = false;
+  bool watch = false;
   enum { clearNothing, clearFakepath, clearAll } clear;
   string basedir;
   string fakepath;
@@ -147,6 +149,10 @@ int main(int argc, char* argv[]) {
       verify = true;
       continue;
     }
+    if( strcmp(argv[i],"-w") == 0 || strcmp(argv[i],"--watch") == 0 ) {
+      watch = true;
+      continue;
+    }
     if( strncmp(argv[i],"-",1) == 0 ) {
       LOG(logError) << "ERROR: unknown argument " << argv[i];
       usage();
@@ -201,6 +207,7 @@ int main(int argc, char* argv[]) {
       if( clear == clearFakepath ) {
         LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
         w->deleteDirectory(fakepathId);
+        fakepathId = w->ascendPath(fakepath);
       }
     }
 
@@ -218,6 +225,11 @@ int main(int argc, char* argv[]) {
     for(minutes = 0; duration > 60; minutes++) //Count minutes
       duration -= 60;
     LOG(logInfo) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
+
+    if( watch ) {
+      LOG(logInfo) << "Running watch on " << fakepath;
+      w->watch(basedir,fakepathId);
+    }
   }
 
   delete w;

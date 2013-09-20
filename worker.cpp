@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include <dirent.h>
+#include <sys/inotify.h>
 #include <sys/stat.h>
 
 worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
@@ -16,6 +17,7 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_fileTable("fscrawl_files"),
                                                 p_inheritMTime(false),
                                                 p_inheritSize(true),
+                                                p_watchDescriptor(0),
                                                 p_connection(dbConnection),
                                                 p_prepQueryFileById(0),
                                                 p_prepQueryFileByName(0),
@@ -149,7 +151,7 @@ string worker::errnoString() {
 }
 
 worker::entry_t worker::getDirectoryById(uint32_t id) {
-  entry_t e = { id, 0, string(), 0, 0, entry_t::entryUnknown, entry_t::directory };
+  entry_t e = { id, 0, string(), 0, 0, 0, entry_t::entryUnknown, entry_t::directory };
   p_prepQueryDirById->setUInt(1,id);
   sql::ResultSet* res = p_prepQueryDirById->executeQuery();
   if( res->next() ) {
@@ -163,7 +165,7 @@ worker::entry_t worker::getDirectoryById(uint32_t id) {
 }
 
 worker::entry_t worker::getDirectoryByName(const string& name, uint32_t parent) {
-  entry_t e = { 0, 0, name, parent, 0, entry_t::entryUnknown, entry_t::directory };
+  entry_t e = { 0, 0, name, parent, 0, 0, entry_t::entryUnknown, entry_t::directory };
   p_prepQueryDirByName->setUInt(1,parent);
   p_prepQueryDirByName->setString(2,name);
   sql::ResultSet* res = p_prepQueryDirByName->executeQuery();
@@ -177,7 +179,7 @@ worker::entry_t worker::getDirectoryByName(const string& name, uint32_t parent) 
 }
 
 worker::entry_t worker::getFileById(uint32_t id) {
-  entry_t e = { id, 0, string(), 0, 0, entry_t::entryUnknown, entry_t::file };
+  entry_t e = { id, 0, string(), 0, 0, 0, entry_t::entryUnknown, entry_t::file };
   p_prepQueryFileById->setUInt(1,id);
   sql::ResultSet* res = p_prepQueryFileById->executeQuery();
   if( res->next() ) {
@@ -191,7 +193,7 @@ worker::entry_t worker::getFileById(uint32_t id) {
 }
 
 worker::entry_t worker::getFileByName(const string& name, uint32_t parent) {
-  entry_t e = { 0, 0, name, parent, 0, entry_t::entryUnknown, entry_t::file };
+  entry_t e = { 0, 0, name, parent, 0, 0, entry_t::entryUnknown, entry_t::file };
   p_prepQueryFileByName->setUInt(1,parent);
   p_prepQueryFileByName->setString(2,name);
   sql::ResultSet* res = p_prepQueryFileByName->executeQuery();
@@ -271,9 +273,11 @@ void worker::initDatabase() {
 
 inline void worker::inheritProperties(entry_t* parent, const entry_t* entry) const {
   if( p_inheritSize )
-    parent->size += entry->size;
-  if( p_inheritMTime && parent->mtime < entry->mtime )
+    parent->subSize += entry->size; //do not flag update yet, total sum is not yet known
+  if( p_inheritMTime && parent->mtime < entry->mtime ) {
     parent->mtime = entry->mtime;
+    parent->state = entry_t::entryPropertiesChanged; //flag parent to update
+  }
 }
 
 uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
@@ -290,7 +294,7 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
   if( res->next() )
     id = res->getUInt(1);
   else
-    LOG(logError) << "ERROR: Insert statement failed for " << name;
+    LOG(logError) << "Insert statement failed for " << name;
   delete res;
   LOG(logDebug) << "inserted dir id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
   return id;
@@ -310,16 +314,17 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
   if( res->next() )
     id = res->getUInt(1);
   else
-    LOG(logError) << "ERROR: Insert statement failed for " << name;
+    LOG(logError) << "Insert statement failed for " << name;
   delete res;
   LOG(logDebug) << "inserted file file id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
   return id;
 }
 
 void worker::parseDirectory(const string& path, uint32_t id) {
-//   entry_t e = { id, 0, string(), 0, 0, entry_t::entryOk, entry_t::directory };
   entry_t e = getDirectoryById(id);
   parseDirectory(path, &e);
+  if( e.state == entry_t::entryPropertiesChanged )
+    updateDirectory(e.id, e.size, e.mtime);
 }
 
 void worker::parseDirectory(const string& path, entry_t* ownEntry) {
@@ -331,15 +336,11 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   struct stat64 dirEntryStat; //directory's stat
   vector<entry_t*> entryCache;
 
-  uint64_t saveSize = ownEntry->size;
-  ownEntry->size = 0; //set size to zero, will be counted and compared to saveSize afterwards
-  time_t saveMTime = ownEntry->mtime;
-
   LOG(logDetailed) << "Processing directory " << path;
 
   dir = opendir(path.c_str());
   if( dir == NULL ) {
-    LOG(logError) << "ERROR: failed to read directory " << path << ": " << errnoString();
+    LOG(logError) << "failed to read directory " << path << ": " << errnoString();
     return;
   }
 
@@ -349,10 +350,10 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   while( ( dirEntry = readdir(dir) ) ) { //readdir returns NULL when "end" of directory is reached
     if( strcmp(dirEntry->d_name,".") == 0 || strcmp(dirEntry->d_name,"..") == 0 ) //don't process . and .. for obvious reasons
       continue;
-    string dirEntryPath = path + "/" + dirEntry->d_name;
+    string dirEntryPath = path + '/' + dirEntry->d_name;
     LOG(logDebug) << "processing dirEntry " << dirEntryPath;
     if( stat64(dirEntryPath.c_str(), &dirEntryStat) ) {
-      LOG(logError) << "ERROR: stat() on " << dirEntryPath << " failed: " << errnoString() << endl;
+      LOG(logError) << "stat() on " << dirEntryPath << " failed: " << errnoString() << endl;
       continue;
     }
 
@@ -373,23 +374,31 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
 
     if( entry == 0 ) { //entry does not exist in db yet
       entry = new entry_t;
-      entry->state = entry_t::entryNew;
-      if( S_ISDIR(dirEntryStat.st_mode) )
-        entry->type = entry_t::directory;
-      else
-        entry->type = entry_t::file;
       entry->id = 0;
       entry->parent = ownEntry->id;
       entry->name = dirEntry->d_name;
       entry->mtime = dirEntryStat.st_mtime;
       entry->size = dirEntryStat.st_size;
+      entry->state = entry_t::entryNew;
+      if( S_ISDIR(dirEntryStat.st_mode) ) {
+        entry->subSize = dirEntryStat.st_size;
+        entry->type = entry_t::directory;
+      } else {
+        entry->subSize = 0;
+        entry->type = entry_t::file;
+      }
       entryCache.push_back(entry);
     } else { //entry is in db, check for changes
-      if( entry->size != (uint64_t)dirEntryStat.st_size && ( entry->type == entry_t::file || !p_inheritSize ) ) {
-        entry->size = dirEntryStat.st_size;
-        entry->state = entry_t::entryPropertiesChanged;
+      if( entry->type == entry_t::directory )
+          entry->subSize = dirEntryStat.st_size;
+      else {
+        entry->subSize = 0;
+        if( entry->size != (uint64_t)dirEntryStat.st_size && p_inheritSize ) {
+          entry->size = dirEntryStat.st_size;
+          entry->state = entry_t::entryPropertiesChanged; //only flag files for update, decision on directories will be made after parsing
+        }
       }
-      if( entry->mtime != dirEntryStat.st_mtime && ( entry->type == entry_t::file || !p_inheritMTime ) ) {
+      if( entry->mtime != dirEntryStat.st_mtime && p_inheritMTime ) {
         entry->mtime = dirEntryStat.st_mtime;
         entry->state = entry_t::entryPropertiesChanged;
       }
@@ -403,9 +412,8 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
       p_statistics.directories++;
   }
 
-  //adds size, updates mtime if larger
-  processChangedEntries(entryCache, ownEntry); //add new files, also insert directories, but mark them to be updated later on
-  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); ) { //we do not need any file entry_t anymore, just keep directories
+  processChangedEntries(entryCache, ownEntry); //add new files, also insert directories (but not yet mtime/size)
+  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); ) { //we do not need any file entry_t anymore, just keep directories to lower the recursion's memory footprint
     if( (*it)->type != entry_t::directory ) {
       delete *it;
       it = entryCache.erase(it);
@@ -413,14 +421,18 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
       it++;
   }
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) { //only directories left
-    parseDirectory(path + "/" + (*it)->name, *it);
-    inheritProperties(ownEntry, *it);
+    parseDirectory(path + '/' + (*it)->name, *it);
+    inheritProperties(ownEntry, *it); //copies size and mtime info (size to subSize for later comparison)
   }
+  processChangedEntries(entryCache, ownEntry);
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) //we do not need any file entry_t anymore, just keep directories
     delete *it; //do not have to call entryCache::erase, it will be deleted anyway
 
-  if( saveSize != ownEntry->size || saveMTime != ownEntry->mtime )
-    updateDirectory(ownEntry->id, ownEntry->size, ownEntry->mtime);
+  LOG(logDebug) << "dir " << ownEntry->name << " finished ownEntry->subSize " << ownEntry->subSize << " ownEntry->size " << ownEntry->size;
+  if( ownEntry->subSize != ownEntry->size ) {
+    ownEntry->size = ownEntry->subSize;
+    ownEntry->state = entry_t::entryPropertiesChanged;
+  }
 
   LOG(logDebug) << "leaving directory " << path;
   closedir(dir);
@@ -443,11 +455,12 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
         }
         case entry_t::entryNew : {
           (*it)->id = insertDirectory( (*it)->parent, (*it)->name, (*it)->size, (*it)->mtime );
-          (*it)->state = entry_t::entryPropertiesChanged; //flag for property update after parsing, do not erase
+          (*it)->state = entry_t::entryOk;
           break;
         }
         case entry_t::entryUnknown : //continue to entryDeleted
         case entry_t::entryDeleted : {
+          LOG(logInfo) << "Dropping file \"" << (*it)->name << '\"';
           deleteDirectory( (*it)->id );
           break;
         }
@@ -489,6 +502,29 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
   }
 }
 
+worker::entry_t worker::readPath(const string& path) {
+  LOG(logDebug) << "reading path " << path;
+
+  struct stat64 entryStat; //entry's stat
+  entry_t entry = { 0, 0, string(), 0, 0, 0, entry_t::entryUnknown, entry_t::any };
+
+  if( stat64(path.c_str(), &entryStat) ) {
+    LOG(logError) << "stat64() on " << path << " failed: " << errnoString() << endl;
+    return entry;
+  }
+
+  entry.name = path.substr( path.find_last_of('/') );
+  entry.size = entryStat.st_size;
+  entry.mtime = entryStat.st_mtime;
+  if( S_ISDIR(entryStat.st_mode) )
+    entry.type = entry_t::directory;
+  else
+    entry.type = entry_t::file;
+  entry.state = entry_t::entryOk;
+
+  return entry;
+}
+
 void worker::setConnection(sql::Connection* dbConnection) {
   p_connection = dbConnection;
   p_databaseInitialized = false;
@@ -523,6 +559,15 @@ void worker::updateFile(uint32_t id, uint64_t size, time_t mtime) {
   p_prepUpdateDir->setUInt(2,mtime);
   p_prepUpdateDir->setUInt(3,id);
   p_prepUpdateDir->execute();
+}
+
+void worker::updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime) {
+  entry_t e = getDirectoryById(firstParent);
+  if( p_inheritMTime && e.mtime < newMTime )
+    e.mtime = newMTime;
+  updateDirectory(firstParent, e.size + sizeDiff, e.mtime);
+  if( e.parent != 0 )
+    updateTreeProperties(e.parent, sizeDiff, newMTime);
 }
 
 //verifies the complete tree, deletes orphaned entries
@@ -598,4 +643,222 @@ void worker::verifyTree() {
   }
   delete res;
   delete idCache;
+}
+
+void worker::removeWatches(uint32_t id) {
+  p_prepQueryDirsByParent->setUInt(1,id);
+  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
+  vector<uint32_t> cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
+  while( res->next() )
+    cache.push_back(res->getUInt(1));
+  for( vector<uint32_t>::iterator it = cache.begin(); it != cache.end(); it++ )
+    removeWatches(*it);
+  LOG(logDebug) << "removing watch of id " << id;
+  for(map< int, pair<uint32_t,string> >::iterator it = p_watches.begin(); it != p_watches.end(); it++)
+    if( it->second.first == id )
+      inotify_rm_watch(p_watchDescriptor, it->first);
+}
+
+void worker::setupWatches(const string& path, uint32_t id) {
+  p_prepQueryDirsByParent->setUInt(1,id);
+  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
+  vector< pair<uint32_t, string> > cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
+  while( res->next() )
+    cache.push_back( make_pair<uint32_t, string>(res->getUInt(1), res->getString(2)) );
+  delete res;
+  for( vector< pair<uint32_t, string> >::iterator it = cache.begin(); it != cache.end(); it++ )
+    setupWatches(path+'/'+it->second, it->first);
+  LOG(logDetailed) << "Setting up watch for \"" << path << "\" (id " << id << ')';
+  int dirWatchDescriptor = inotify_add_watch( p_watchDescriptor, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR ); // IN_MOVE_SELF
+  if( dirWatchDescriptor != 0 )
+    p_watches[dirWatchDescriptor] = make_pair<uint32_t,string>(id,path);
+  else
+    LOG(logError) << "Unable to setup watch for id " << id << " with path \"" << path << '\"';
+}
+
+void worker::watch(const string& path, uint32_t id) {
+  p_watches.clear();
+  LOG(logDebug) << "initializing inotify";
+  p_watchDescriptor = inotify_init();
+  LOG(logInfo) << "Setting up watches";
+  setupWatches(path,id);
+
+  LOG(logInfo) << "Setup complete, waiting for events...";
+  bool run = true; //convenience run-while-true variable
+  const int eventSize = sizeof(struct inotify_event) + NAME_MAX + 1;
+
+  while( run ) {
+    char* buffer = new char[eventSize];
+    int len = read(p_watchDescriptor, buffer, eventSize);
+    int offset = 0;
+    while( offset < len ) {
+      struct inotify_event* event = (struct inotify_event*)(buffer+offset);
+      switch( event->mask ) {
+        case IN_ATTRIB : {
+          LOG(logDebug) << "got inotify event IN_ATTRIB for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          break; //do not handle since touching a file also evokes IN_CLOSE_WRITE
+        }
+        case IN_ATTRIB | IN_ISDIR : { //directory's mtime changed
+          LOG(logDebug) << "got inotify event IN_ATTRIB for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          const string path = p.second + '/' + event->name;
+          entry_t fsEntry = readPath(path);
+          if( fsEntry.state == entry_t::entryUnknown ) { //readPath failed
+            LOG(logError) << "failed to read path \"" << path << '\"';
+            break;
+          }
+          entry_t dbEntry = getDirectoryByName(event->name, p.first);
+          if( dbEntry.id == 0 ) {
+            LOG(logWarning) << "Modified directory " << event->name << " was not yet in database, fixing.";
+            dbEntry.id = insertDirectory(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime);
+            parseDirectory(path, &dbEntry);
+            updateDirectory(dbEntry.id, dbEntry.size, dbEntry.mtime);
+            updateTreeProperties(p.first, dbEntry.size, dbEntry.mtime);
+          } else {
+            LOG(logInfo) << "Updating directory " << event->name;
+            updateDirectory(dbEntry.id, dbEntry.size, fsEntry.mtime);
+            updateTreeProperties(p.first, 0, fsEntry.mtime); //no size change intended
+          }
+          break;
+        }
+        case IN_CREATE : {
+          LOG(logDebug) << "got inotify event IN_CREATE for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          const string path = p.second + '/' + event->name;
+          entry_t e = readPath( path );
+          if( e.state == entry_t::entryOk ) { //readPath successful
+            insertFile(p.first, event->name, e.size, e.mtime);
+            updateTreeProperties(p.first, e.size, e.mtime);
+          } else
+            LOG(logError) << "failed to read path \"" << path << '\"';
+          break;
+        }
+        case IN_CREATE | IN_ISDIR : {
+          LOG(logDebug) << "got inotify event IN_CREATE for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          const string path = p.second + '/' + event->name;
+          entry_t e = readPath( path );
+          if( e.state == entry_t::entryOk ) { //readPath successful
+            e.id = insertDirectory(p.first, event->name, e.size, e.mtime);
+            updateTreeProperties(p.first, e.size, e.mtime);
+            setupWatches(path, e.id);
+          } else
+            LOG(logError) << "failed to read path \"" << path << '\"';
+          break;
+        }
+        case IN_CLOSE_WRITE : {
+          LOG(logDebug) << "got inotify event IN_CLOSE_WRITE for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          const string path = p.second + '/' + event->name;
+          entry_t fsEntry = readPath(path);
+          if( fsEntry.state == entry_t::entryUnknown ) { //readPath failed
+            LOG(logError) << "failed to read path \"" << path << '\"';
+            break;
+          }
+          entry_t dbEntry = getFileByName(event->name, p.first);
+          if( dbEntry.id == 0 ) {
+            LOG(logWarning) << "Modified file " << event->name << " was not yet in database, fixing.";
+            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime);
+            updateTreeProperties(p.first, fsEntry.size, fsEntry.mtime);
+          } else {
+            LOG(logInfo) << "Updating file " << event->name;
+            updateFile(dbEntry.id, fsEntry.size, fsEntry.mtime);
+            updateTreeProperties(p.first, fsEntry.size - dbEntry.size, fsEntry.mtime);
+          }
+          break;
+        }
+        case IN_CLOSE_WRITE | IN_ISDIR : {
+          LOG(logDebug) << "got inotify event IN_CLOSE_WRITE for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          break; //won't happen, mtime changes are covered by IN_ATTRIB
+        }
+        case IN_MOVED_FROM : {
+          LOG(logDebug) << "got inotify event IN_MOVED_FROM for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          entry_t e = getFileByName(event->name, p.first);
+          if( e.id != 0 ) {
+            LOG(logInfo) << "Removing file " << event->name;
+            deleteFile(e.id);
+            updateTreeProperties(p.first, (int64_t)-1*e.size, 0);
+          } else
+            LOG(logError) << "Failed to get file \"" << path << "\" from db for removal, already deleted.";
+          break;
+        }
+        case IN_MOVED_FROM | IN_ISDIR : {
+          LOG(logDebug) << "got inotify event IN_MOVED_FROM for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          entry_t e = getDirectoryByName(event->name, p.first);
+          if( e.id != 0 ) {
+            removeWatches(e.id);
+            LOG(logInfo) << "Removing directory " << event->name;
+            deleteDirectory(e.id);
+            updateTreeProperties(p.first, (int64_t)-1*e.size, 0);
+          } else
+            LOG(logError) << "Failed to get directory \"" << event->name << "\" from db for removal, already deleted.";
+          break;
+        }
+        case IN_MOVED_TO : {
+          LOG(logDebug) << "got inotify event IN_MOVED_TO for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          const string path = p.second + '/' + event->name;
+          entry_t e = readPath( path );
+          if( e.state == entry_t::entryOk ) { //readPath successful
+            insertFile(p.first, event->name, e.size, e.mtime);
+            updateTreeProperties(p.first, e.size, e.mtime);
+          } else
+            LOG(logError) << "failed to read path \"" << path << '\"';
+          break;
+        }
+        case IN_MOVED_TO | IN_ISDIR : {
+          LOG(logDebug) << "got inotify event IN_MOVED_TO for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          const string path = p.second + '/' + event->name;
+          entry_t e = readPath( path );
+          if( e.state == entry_t::entryOk ) { //readPath successful
+            e.id = insertDirectory(p.first, event->name, e.size, e.mtime);
+            parseDirectory(path, &e);
+            setupWatches(path, e.id);
+            updateDirectory(e.id, e.size, e.mtime);
+            updateTreeProperties(p.first, e.size, e.mtime);
+          } else
+            LOG(logError) << "failed to read path \"" << path << '\"';
+          break;
+        }
+        case IN_DELETE : {
+          LOG(logDebug) << "got inotify event IN_DELETE for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          entry_t e = getFileByName(event->name, p.first);
+          if( e.id != 0 ) {
+            LOG(logInfo) << "Removing file " << event->name;
+            deleteFile(e.id);
+            updateTreeProperties(p.first, (int64_t)-1*e.size, 0);
+          } else
+            LOG(logError) << "Failed to get file \"" << event->name << "\" from db for removal, already deleted.";
+          break;
+        }
+        case IN_DELETE | IN_ISDIR : {
+          LOG(logDebug) << "got inotify event IN_DELETE for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          const pair<uint32_t,string> p = p_watches[event->wd];
+          entry_t e = getDirectoryByName(event->name, p.first);
+          if( e.id != 0 ) {
+            removeWatches(e.id);
+            LOG(logInfo) << "Removing directory " << event->name;
+            deleteDirectory(e.id);
+            updateTreeProperties(p.first, (int64_t)-1*e.size, 0);
+          } else
+            LOG(logError) << "Failed to get directory \"" << event->name << "\" from db for removal, already deleted.";
+          break;
+        }
+        default : {
+          LOG(logDebug) << "unhandled inotify event " << event->mask << " for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          break;
+        }
+      }
+      offset += sizeof(inotify_event)+event->len;
+    }
+    delete[] buffer;
+  }
+
+  //program cannot reach that point till now
+  LOG(logInfo) << "Giving up watches";
+  removeWatches(id);
 }
