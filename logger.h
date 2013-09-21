@@ -5,6 +5,7 @@
     if (level > Logger::logLevel()) ; \
     else Logger().getLogger(level)
 
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -31,14 +32,28 @@ protected:
 class LoggerFacility
 {
 public:
+  virtual ~LoggerFacility();
   virtual void output(const std::string& msg) = 0;
 };
 
 class LoggerFacilityConsole : public LoggerFacility
 {
 public:
-  static std::ostream& stream();
+  virtual ~LoggerFacilityConsole();
+  std::ostream& stream();
   void output(const std::string& msg);
+};
+
+class LoggerFacilityFile : public LoggerFacility
+{
+public:
+  virtual ~LoggerFacilityFile();
+  void closeLogFile();
+  bool openLogFile(const std::string& path, bool truncate = false);
+  void output(const std::string& msg);
+
+private:
+  std::fstream p_fs;
 };
 
 #endif //LOGGER_H

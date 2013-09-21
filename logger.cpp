@@ -62,6 +62,14 @@ std::string Logger::toString(logLevel_t level)
   return buffer[level];
 }
 
+LoggerFacility::~LoggerFacility()
+{
+}
+
+LoggerFacilityConsole::~LoggerFacilityConsole()
+{
+}
+
 inline std::ostream& LoggerFacilityConsole::stream()
 {
   static std::ostream* pStream = &std::cerr;
@@ -71,4 +79,32 @@ inline std::ostream& LoggerFacilityConsole::stream()
 inline void LoggerFacilityConsole::output(const std::string& msg)
 {
   stream() << msg;
+}
+
+LoggerFacilityFile::~LoggerFacilityFile()
+{
+  if( p_fs.is_open() )
+    p_fs.close();
+}
+
+void LoggerFacilityFile::closeLogFile()
+{
+  if( p_fs.is_open() )
+    p_fs.close();
+}
+
+bool LoggerFacilityFile::openLogFile(const std::string& path, bool truncate)
+{
+  closeLogFile();
+  if( truncate )
+    p_fs.open(path.c_str(), std::ios_base::out | std::ios_base::trunc);
+  else
+    p_fs.open(path.c_str(), std::ios_base::out | std::ios_base::app);
+  return p_fs.is_open();
+}
+
+void LoggerFacilityFile::output(const std::string& msg)
+{
+  p_fs << msg;
+  p_fs.flush();
 }
