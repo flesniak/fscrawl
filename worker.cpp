@@ -414,7 +414,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
 
   processChangedEntries(entryCache, ownEntry); //add new files, also insert directories (but not yet mtime/size)
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); ) { //we do not need any file entry_t anymore, just keep directories to lower the recursion's memory footprint
-    if( (*it)->type != entry_t::directory ) {
+    if( (*it)->type != entry_t::directory || (*it)->state == entry_t::entryDeleted ) {
       delete *it;
       it = entryCache.erase(it);
     } else
