@@ -14,22 +14,23 @@ using namespace std;
 
 void usage() {
   LOG(logInfo) << "Usage: fscrawl <MODE> [OPTIONS] <basedir|-c>";
-  LOG(logInfo) << "  -h, --help\tDisplay this help and exit";
-  LOG(logInfo) << "  -u, --user\tSpecify database user (default: \"root\")";
-  LOG(logInfo) << "  -p, --password\tSpecify database user password (default: none)";
-  LOG(logInfo) << "  -m, --host\tConnect to host (default: \"localhost\"";
   LOG(logInfo) << "  -d, --database\tDatabase to use (default: \"fscrawl\")";
   LOG(logInfo) << "  -f, --fakepath\tInstead of having basedir as absolute root directory, parse all files as if they were unter this fakepath";
+  LOG(logInfo) << "  -h, --help\tDisplay this help and exit";
+  LOG(logInfo) << "  -l, --logfile\tLog to file instead of stderr";
+  LOG(logInfo) << "  -m, --host\tConnect to host (default: \"localhost\"";
+  LOG(logInfo) << "  -p, --password\tSpecify database user password (default: none)";
+  LOG(logInfo) << "  -q, --quiet\tOnly display severe errors. Useful for cron-jobbing";
+  LOG(logInfo) << "  -u, --user\tSpecify database user (default: \"root\")";
+  LOG(logInfo) << "  -v, --verbose\tIncrease log level (0x=info,1x=detailed,2x=debug)";
+  LOG(logInfo) << "  -w, --watch\tWatch the given basedir after refreshing (program will block)";
   LOG(logInfo) << "  --file-table\tTable to use for files (default: \"fscrawl_files\")";
   LOG(logInfo) << "  --dir-table\tTable to use for directories (default: \"fscrawl_directories\")";
-  LOG(logInfo) << "  -v, --verbose\tIncrease log level (0x=info,1x=detailed,2x=debug)";
-  LOG(logInfo) << "  -q, --quiet\tOnly display severe errors. Useful for cron-jobbing";
-  LOG(logInfo) << "  -w, --watch\tWatch the given basedir after refreshing (program will block)";
   LOG(logInfo) << "The following options may be called without a basedir, then no scanning will be done:";
   LOG(logInfo) << "  -c, --clear\tDelete the tree for this fakepath, others will be kept";
   LOG(logInfo) << "  -C, --clearall\tClear both tables completely";
   LOG(logInfo) << "  -V, --verify\tVerify the tree structure - takes some time";
-  LOG(logInfo) << "fscrawl version "VERSION;
+  LOG(logInfo) << "fscrawl "VERSION;
 }
 
 int main(int argc, char* argv[]) {
@@ -40,6 +41,7 @@ int main(int argc, char* argv[]) {
   string fakepath;
   string directoryTable;
   string fileTable;
+  string logfile;
   string mysql_user("root");
   string mysql_password;
   string mysql_host("localhost");
@@ -146,6 +148,16 @@ int main(int argc, char* argv[]) {
       fakepath = argv[i];
       continue;
     }
+    if( strcmp(argv[i],"-l") == 0 || strcmp(argv[i],"--logfile") == 0 ) {
+      if( i+1 >= argc ) {
+        LOG(logError) << "expected logfile";
+        usage();
+        exit(1);
+      }
+      i++;
+      logfile = argv[i];
+      continue;
+    }
     if( strcmp(argv[i],"-V") == 0 || strcmp(argv[i],"--verify") == 0 ) {
       verify = true;
       continue;
@@ -167,6 +179,19 @@ int main(int argc, char* argv[]) {
       exit(1);
     }
   }
+
+  if( !logfile.empty() ) {
+    LoggerFacilityFile* lff = new LoggerFacilityFile;
+    if( !lff->openLogFile(logfile, false) ) {
+      LOG(logError) << "failed to open logfile \"" << logfile << '\"';
+      usage();
+      exit(1);
+    }
+    delete Logger::facility();
+    Logger::facility() = lff;
+  }
+
+  LOG(logInfo) << "fscrawl "VERSION << " started";
 
   if( basedir.empty() ) {
     if( clear == clearNothing && !verify ) { //if no basedir is given but clear is set, only clear the db and exit
