@@ -393,12 +393,12 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
           entry->subSize = dirEntryStat.st_size;
       else {
         entry->subSize = 0;
-        if( entry->size != (uint64_t)dirEntryStat.st_size && p_inheritSize ) {
+        if( (entry->size != (uint64_t)dirEntryStat.st_size) && p_inheritSize ) {
           entry->size = dirEntryStat.st_size;
           entry->state = entry_t::entryPropertiesChanged; //only flag files for update, decision on directories will be made after parsing
         }
       }
-      if( entry->mtime != dirEntryStat.st_mtime && p_inheritMTime ) {
+      if( (entry->mtime != dirEntryStat.st_mtime) && p_inheritMTime ) {
         entry->mtime = dirEntryStat.st_mtime;
         entry->state = entry_t::entryPropertiesChanged;
       }
@@ -477,6 +477,7 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
           break;
         }
         case entry_t::entryPropertiesChanged : {
+          LOG(logDebug) << "processChangedEntries() file id " << (*it)->id << " size " << (*it)->size << " mtime " << (*it)->mtime;
           updateFile( (*it)->id, (*it)->size, (*it)->mtime );
           inheritProperties(parentEntry, *it);
           break;
@@ -554,10 +555,10 @@ void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
 void worker::updateFile(uint32_t id, uint64_t size, time_t mtime) {
   LOG(logInfo) << "Updating file id " << id;
   LOG(logDebug) << "updating file id " << id << " size " << size << " mtime " << mtime;
-  p_prepUpdateDir->setUInt64(1,size);
-  p_prepUpdateDir->setUInt(2,mtime);
-  p_prepUpdateDir->setUInt(3,id);
-  p_prepUpdateDir->execute();
+  p_prepUpdateFile->setUInt64(1,size);
+  p_prepUpdateFile->setUInt(2,mtime);
+  p_prepUpdateFile->setUInt(3,id);
+  p_prepUpdateFile->execute();
 }
 
 void worker::updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime) {
