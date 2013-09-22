@@ -232,7 +232,8 @@ int main(int argc, char* argv[]) {
     if( clear == clearFakepath ) {
       LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
       w->deleteDirectory(fakepathId);
-      fakepathId = w->ascendPath(fakepath);
+      if( !basedir.empty() )
+        fakepathId = w->ascendPath(fakepath);
     }
   }
 
