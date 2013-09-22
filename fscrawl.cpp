@@ -217,24 +217,26 @@ int main(int argc, char* argv[]) {
     LOG(logWarning) << "Clearing database";
     w->clearDatabase();
   }
+
   if( verify ) {
     LOG(logInfo) << "Verifying tree";
     w->verifyTree();
   }
-  if( !basedir.empty() ) {
-    //ascend to given fakepath
-    uint32_t fakepathId = 0;
-    if( !fakepath.empty() ) {
-      LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
-      fakepathId = w->ascendPath(fakepath);
-      LOG(logDebug) << "got fakepathId " << fakepathId;
-      if( clear == clearFakepath ) {
-        LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
-        w->deleteDirectory(fakepathId);
-        fakepathId = w->ascendPath(fakepath);
-      }
-    }
 
+  //ascend to given fakepath
+  uint32_t fakepathId = 0;
+  if( !fakepath.empty() ) {
+    LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
+    fakepathId = w->ascendPath(fakepath);
+    LOG(logDebug) << "got fakepathId " << fakepathId;
+    if( clear == clearFakepath ) {
+      LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
+      w->deleteDirectory(fakepathId);
+      fakepathId = w->ascendPath(fakepath);
+    }
+  }
+
+  if( !basedir.empty() ) {
     //Save starting time
     LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
     time_t start = time(0);
