@@ -13,7 +13,7 @@
 using namespace std;
 
 void usage() {
-  LOG(logInfo) << "Usage: fscrawl <MODE> [OPTIONS] <basedir|-c>";
+  LOG(logInfo) << "Usage: fscrawl [OPTIONS] <basedir|-c|-C|-V>";
   LOG(logInfo) << "  -d, --database\tDatabase to use (default: \"fscrawl\")";
   LOG(logInfo) << "  -f, --fakepath\tInstead of having basedir as absolute root directory, parse all files as if they were unter this fakepath";
   LOG(logInfo) << "  -h, --help\tDisplay this help and exit";
