@@ -221,6 +221,7 @@ int main(int argc, char* argv[]) {
   if( verify ) {
     LOG(logInfo) << "Verifying tree";
     w->verifyTree();
+    LOG(logInfo) << "Tree verified";
   }
 
   //ascend to given fakepath

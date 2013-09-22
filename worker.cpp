@@ -285,7 +285,7 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
 
   p_prepInsertDir->setString(1,name);
   p_prepInsertDir->setUInt(2,parent);
-  p_prepInsertDir->setUInt(3,size);
+  p_prepInsertDir->setUInt64(3,size);
   p_prepInsertDir->setUInt(4,mtime);
   p_prepInsertDir->execute();
 
@@ -305,7 +305,7 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
 
   p_prepInsertFile->setString(1,name);
   p_prepInsertFile->setUInt(2,parent);
-  p_prepInsertFile->setUInt(3,size);
+  p_prepInsertFile->setUInt64(3,size);
   p_prepInsertFile->setUInt(4,mtime);
   p_prepInsertFile->execute();
 
@@ -439,7 +439,6 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
 }
 
 void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry) {
-  LOG(logDebug) << "processChangedEntries()";
   vector<entry_t*>::iterator it = entries.begin();
   while( it != entries.end() ) {
 
