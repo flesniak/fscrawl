@@ -1,12 +1,12 @@
 CC=g++
-CFLAGS=-c -g -Wall -Wextra -I /usr/include/mysql-connector/
+CFLAGS=-c -g -O2 -Wall -Wextra -I /usr/include/mysql-connector/
 LDFLAGS=-lmysqlcppconn -lstdc++
 EXECUTABLE=fscrawl
 
 all: fscrawl
 
 release: fscrawl.o logger.o worker.o
-	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release fscrawl.o worker.o
+	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release fscrawl.o logger.o worker.o
 
 fscrawl: fscrawl.o logger.o worker.o
 	$(CC) $(LDFLAGS) -o $(EXECUTABLE) fscrawl.o logger.o worker.o
