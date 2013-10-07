@@ -6,7 +6,7 @@ EXECUTABLE=fscrawl
 all: fscrawl
 
 release: fscrawl.o logger.o worker.o
-	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release fscrawl.o worker.o
+	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release fscrawl.o logger.o worker.o
 
 fscrawl: fscrawl.o logger.o worker.o
 	$(CC) $(LDFLAGS) -o $(EXECUTABLE) fscrawl.o logger.o worker.o
