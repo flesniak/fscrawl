@@ -459,8 +459,9 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
         }
         case entry_t::entryUnknown : //continue to entryDeleted
         case entry_t::entryDeleted : {
-          LOG(logInfo) << "Dropping file \"" << (*it)->name << '\"';
+          LOG(logInfo) << "Dropping directory \"" << (*it)->name << '\"';
           deleteDirectory( (*it)->id );
+          (*it)->state = entry_t::entryDeleted;
           break;
         }
         default : {
