@@ -8,7 +8,7 @@
 #include "worker.h"
 #include "logger.h"
 
-#define VERSION "2.1"
+#define VERSION "2.2"
 
 using namespace std;
 
