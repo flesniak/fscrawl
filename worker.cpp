@@ -115,9 +115,19 @@ void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" i
   LOG(logDebug) << "deleting directory id " << id;
   p_prepQueryDirsByParent->setUInt(1,id);
   sql::ResultSet *res = p_prepQueryDirsByParent->executeQuery();
-  while( res->next() )
+  /*while( res->next() )
     deleteDirectory( res->getUInt(1) ); //first, delete every subdirectory
+    */
+  list<uint32_t> childIds( res->rowsCount() ); //save all ids to a list since a ResultSet seems to become invalid when running a preparedStatement again (using nested function here)
+  list<uint32_t>::iterator childIdsIt = childIds.begin();
+  while( res->next() && childIdsIt != childIds.end() ) {
+    *childIdsIt = res->getUInt(1);
+    childIdsIt++;
+  }
   delete res;
+  LOG(logDebug) << "got " << childIds.size() << " children of directory " << id;
+  for( list<uint32_t>::iterator it = childIds.begin(); it != childIds.end(); it++ )
+    deleteDirectory( *it );
   p_prepDeleteFiles->setUInt(1,id);
   p_prepDeleteFiles->execute(); //now, delete every file in this directory
   p_prepDeleteDir->setUInt(1,id);
