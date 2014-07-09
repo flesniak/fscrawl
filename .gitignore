@@ -1,3 +1,5 @@
 *.o
 fscrawl
 fscrawl-release
+test
+*.log
