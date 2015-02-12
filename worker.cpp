@@ -9,6 +9,7 @@
 #include <sstream>
 
 #include <dirent.h>
+#include <unistd.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 
