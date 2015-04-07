@@ -10,6 +10,8 @@
 
 using namespace std;
 
+class Hasher;
+
 class worker {
 public:
   worker(sql::Connection* dbConnection = 0);
@@ -27,12 +29,20 @@ public:
     uint64_t size;
     uint64_t subSize; //used to calculate the size of directories
     enum state_t { entryUnknown, entryOk, entryDeleted, entryPropertiesChanged, entryNew } state;
+    /* entryUnknown: fresh entries from database (cached or directly retrieved), not yet checked against filesystem
+     * entryOk: entry stats equal filesystem stats
+     * entryDeleted: entry was deleted in filesystem
+     * entryNew: entry not in database yet
+     */
     enum type_t { file, directory, any } type;
+    string hash; //only valid for files
   };
 
   void setConnection(sql::Connection* dbConnection);
   void setInheritance(bool inheritSize, bool inheritMTime);
   void setTables(const string& directoryTable, const string& fileTable);
+  void setHasher(Hasher* hasher);
+  Hasher* getHasher() const;
 
   const statistics& getStatistics() const;
 
@@ -64,7 +74,7 @@ private:
   void initDatabase();
   void inheritProperties(entry_t* parent, const entry_t* entry) const;
   uint32_t insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime);
-  uint32_t insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime);
+  uint32_t insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime, const string& hash);
   //parses everything inside path, uses the id specified in ownEntry. size and mtime of contents will be updates into ownEntry as well. does not change the directory itself in the db
   void parseDirectory(const string& path, entry_t* ownEntry);
   void processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry);
@@ -73,8 +83,9 @@ private:
   void removeWatches(uint32_t id);
   void setupWatches(const string& path, uint32_t id);
   void updateDirectory(uint32_t id, uint64_t size, time_t mtime);
-  void updateFile(uint32_t id, uint64_t size, time_t mtime);
+  void updateFile(uint32_t id, uint64_t size, time_t mtime, const string& hash);
   void updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime);
+  void hashFile(entry_t* entry, const string& path) const;
 
   string errnoString();
 
@@ -87,6 +98,8 @@ private:
   statistics p_statistics;
   int p_watchDescriptor;
   map< int, pair<uint32_t,string> > p_watches; //stores inotify watch descriptors and their corresponding ids and paths
+
+  Hasher* p_hasher;
 
   sql::Connection* p_connection;
   sql::PreparedStatement* p_prepQueryFileById;

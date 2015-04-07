@@ -7,8 +7,9 @@
 
 #include "worker.h"
 #include "logger.h"
+#include "hasher.h"
 
-#define VERSION "2.3"
+#define VERSION "2.4"
 
 using namespace std;
 
@@ -24,6 +25,9 @@ void usage() {
   LOG(logInfo) << "  -u, --user\tSpecify database user (default: \"root\")";
   LOG(logInfo) << "  -v, --verbose\tIncrease log level (0x=info,1x=detailed,2x=debug)";
   LOG(logInfo) << "  -w, --watch\tWatch the given basedir after refreshing (program will block)";
+  LOG(logInfo) << "  -T, --tth\tCalculate the tth hash of every file";
+  LOG(logInfo) << "  -M, --md5\tCalculate the md5 hash of every file";
+  LOG(logInfo) << "  -S, --sha1\tCalculate the sha1 hash of every file";
   LOG(logInfo) << "  --file-table\tTable to use for files (default: \"fscrawl_files\")";
   LOG(logInfo) << "  --dir-table\tTable to use for directories (default: \"fscrawl_directories\")";
   LOG(logInfo) << "The following options may be called without a basedir, then no scanning will be done:";
@@ -36,6 +40,7 @@ void usage() {
 int main(int argc, char* argv[]) {
   bool verify = false;
   bool watch = false;
+  Hasher::hashType_t hashType = Hasher::noHash;
   enum { clearNothing, clearFakepath, clearAll } clear = clearNothing;
   string basedir;
   string fakepath;
@@ -166,6 +171,30 @@ int main(int argc, char* argv[]) {
       watch = true;
       continue;
     }
+    if( strcmp(argv[i],"-T") == 0 || strcmp(argv[i],"--tth") == 0 ) {
+      if( hashType != Hasher::noHash ) {
+        LOG(logError) << "Multiple hash algorithms specified";
+        exit(1);
+      }
+      hashType = Hasher::tth;
+      continue;
+    }
+    if( strcmp(argv[i],"-M") == 0 || strcmp(argv[i],"--md5") == 0 ) {
+      if( hashType != Hasher::noHash ) {
+        LOG(logError) << "Multiple hash algorithms specified";
+        exit(1);
+      }
+      hashType = Hasher::md5;
+      continue;
+    }
+    if( strcmp(argv[i],"-S") == 0 || strcmp(argv[i],"--sha1") == 0 ) {
+      if( hashType != Hasher::noHash ) {
+        LOG(logError) << "Multiple hash algorithms specified";
+        exit(1);
+      }
+      hashType = Hasher::sha1;
+      continue;
+    }
     if( strncmp(argv[i],"-",1) == 0 ) {
       LOG(logError) << "unknown argument " << argv[i];
       usage();
@@ -204,14 +233,24 @@ int main(int argc, char* argv[]) {
     if( basedir.at(basedir.size()-1) == '/' ) //don't try that on an empty basedir string
       basedir.erase(basedir.size()-1);
 
-  LOG(logInfo) << "Connecting to SQL server";
-  sql::Driver *driver = get_driver_instance();
-  sql::Connection *con = driver->connect(mysql_host,mysql_user,mysql_password);
-  con->setSchema(mysql_database);
+  sql::Driver *driver = 0;
+  sql::Connection *con = 0;
+  try {
+    LOG(logInfo) << "Connecting to SQL server";
+    driver = get_driver_instance();
+    con = driver->connect(mysql_host,mysql_user,mysql_password);
+    con->setSchema(mysql_database);
+  } catch( exception& e ) {
+    LOG(logError) << "Failed to connect: " << e.what();
+    exit(1);
+  }
 
   LOG(logDebug) << "setting up worker";
   worker* w = new worker(con);
   w->setTables(directoryTable,fileTable);
+
+  if( hashType != Hasher::noHash )
+    w->setHasher( new Hasher(hashType) );
 
   if( clear == clearAll ) {
     LOG(logWarning) << "Clearing database";

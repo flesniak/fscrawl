@@ -1,5 +1,6 @@
 #include "worker.h"
 #include "logger.h"
+#include "hasher.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -19,6 +20,7 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_inheritMTime(false),
                                                 p_inheritSize(true),
                                                 p_watchDescriptor(0),
+                                                p_hasher(0),
                                                 p_connection(dbConnection),
                                                 p_prepQueryFileById(0),
                                                 p_prepQueryFileByName(0),
@@ -99,6 +101,7 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
     entry->name = res->getString(2);
     entry->size = res->getUInt64(3);
     entry->mtime = res->getUInt(4);
+    entry->hash = res->getString(5);
     entryCache.push_back(entry);
     LOG(logDebug) << "cache: got file id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
   }
@@ -162,7 +165,7 @@ string worker::errnoString() {
 }
 
 worker::entry_t worker::getDirectoryById(uint32_t id) {
-  entry_t e = { id, 0, string(), 0, 0, 0, entry_t::entryUnknown, entry_t::directory };
+  entry_t e = { .id = id, .mtime = 0, .name = string(), .parent = 0, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::directory, .hash = string() };
   p_prepQueryDirById->setUInt(1,id);
   sql::ResultSet* res = p_prepQueryDirById->executeQuery();
   if( res->next() ) {
@@ -176,7 +179,7 @@ worker::entry_t worker::getDirectoryById(uint32_t id) {
 }
 
 worker::entry_t worker::getDirectoryByName(const string& name, uint32_t parent) {
-  entry_t e = { 0, 0, name, parent, 0, 0, entry_t::entryUnknown, entry_t::directory };
+  entry_t e = { .id = 0, .mtime = 0, .name = name, .parent = parent, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::directory, .hash = string() };
   p_prepQueryDirByName->setUInt(1,parent);
   p_prepQueryDirByName->setString(2,name);
   sql::ResultSet* res = p_prepQueryDirByName->executeQuery();
@@ -190,7 +193,7 @@ worker::entry_t worker::getDirectoryByName(const string& name, uint32_t parent) 
 }
 
 worker::entry_t worker::getFileById(uint32_t id) {
-  entry_t e = { id, 0, string(), 0, 0, 0, entry_t::entryUnknown, entry_t::file };
+  entry_t e = { .id = id, .mtime = 0, .name = string(), .parent = 0, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::file, .hash = string() };
   p_prepQueryFileById->setUInt(1,id);
   sql::ResultSet* res = p_prepQueryFileById->executeQuery();
   if( res->next() ) {
@@ -198,13 +201,14 @@ worker::entry_t worker::getFileById(uint32_t id) {
     e.parent = res->getUInt(2);
     e.size = res->getUInt64(3);
     e.mtime = res->getUInt(4);
+    e.hash = res->getString(5);
   }
   delete res;
   return e;
 }
 
 worker::entry_t worker::getFileByName(const string& name, uint32_t parent) {
-  entry_t e = { 0, 0, name, parent, 0, 0, entry_t::entryUnknown, entry_t::file };
+  entry_t e = { .id = 0, .mtime = 0, .name = name, .parent = parent, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::file, .hash = string() };
   p_prepQueryFileByName->setUInt(1,parent);
   p_prepQueryFileByName->setString(2,name);
   sql::ResultSet* res = p_prepQueryFileByName->executeQuery();
@@ -212,6 +216,7 @@ worker::entry_t worker::getFileByName(const string& name, uint32_t parent) {
     e.id = res->getUInt(1);
     e.size = res->getUInt64(2);
     e.mtime = res->getUInt(3);
+    e.hash = res->getString(4);
   }
   delete res;
   return e;
@@ -221,24 +226,35 @@ const worker::statistics& worker::getStatistics() const {
   return p_statistics;
 }
 
+void worker::hashFile(entry_t* entry, const string& path) const {
+  if( !p_hasher )
+    return;
+  Hasher::hashStatus_t status = p_hasher->hash(path, entry->hash);
+  if( status != Hasher::hashSuccess ) {
+    LOG(logError) << "Failed to hash entry " << entry->id << ", setting blank hash";
+    entry->hash.clear();
+  }
+}
+
 void worker::initDatabase() {
   LOG(logDebug) << "create tables if not exists"; //create database tables in case they do not exist
-  p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_directoryTable+
-                  "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
-                  "name VARCHAR(255) NOT NULL,"
-                  "parent INT UNSIGNED DEFAULT NULL,"
-                  "size BIGINT UNSIGNED,"
-                  "date DATETIME DEFAULT NULL,"
-                  "INDEX(parent))"
+  p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_directoryTable+" "
+                  "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY, "
+                  "name VARCHAR(255) NOT NULL, "
+                  "parent INT UNSIGNED DEFAULT NULL, "
+                  "size BIGINT UNSIGNED, "
+                  "date DATETIME DEFAULT NULL, "
+                  "INDEX(parent)) "
                   "DEFAULT CHARACTER SET utf8 "
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
-  p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_fileTable+
+  p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_fileTable+" "
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
-                  "name VARCHAR(255) NOT NULL,"
-                  "parent INT UNSIGNED DEFAULT NULL,"
-                  "size BIGINT UNSIGNED,"
-                  "date DATETIME DEFAULT NULL,"
-                  "INDEX(parent))"
+                  "name VARCHAR(255) NOT NULL, "
+                  "parent INT UNSIGNED DEFAULT NULL, "
+                  "size BIGINT UNSIGNED, "
+                  "date DATETIME DEFAULT NULL, "
+                  "hash VARCHAR(40) DEFAULT NULL, " //use VARCHAR instead of BINARY due to TTH hash support (encoded 39chars base32), md5 and sha1 are encoded hex
+                  "INDEX(parent)) "
                   "DEFAULT CHARACTER SET utf8 "
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
 
@@ -259,11 +275,11 @@ void worker::initDatabase() {
   if( p_prepLastInsertID != 0 ) delete p_prepLastInsertID;
 
   //p_prepare heavily used mysql functions
-  p_prepQueryFileById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE id=?");
-  p_prepQueryFileByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE parent=? AND name=?");
-  p_prepQueryFilesByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_fileTable+" WHERE parent=?");
-  p_prepInsertFile = p_connection->prepareStatement("INSERT INTO "+p_fileTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
-  p_prepUpdateFile = p_connection->prepareStatement("UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
+  p_prepQueryFileById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE id=?");
+  p_prepQueryFileByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=? AND name=?");
+  p_prepQueryFilesByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=?");
+  p_prepInsertFile = p_connection->prepareStatement("INSERT INTO "+p_fileTable+" (name,parent,size,date,hash) VALUES (?, ?, ?, FROM_UNIXTIME(?), ?)");
+  p_prepUpdateFile = p_connection->prepareStatement("UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?), hash=? WHERE id=?");
   p_prepDeleteFile = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE id=?");
   p_prepDeleteFiles = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE parent=?");
 
@@ -282,7 +298,7 @@ void worker::initDatabase() {
   p_databaseInitialized = true;
 }
 
-inline void worker::inheritProperties(entry_t* parent, const entry_t* entry) const {
+void worker::inheritProperties(entry_t* parent, const entry_t* entry) const {
   if( p_inheritSize )
     parent->subSize += entry->size; //do not flag update yet, total sum is not yet known
   if( p_inheritMTime && parent->mtime < entry->mtime ) {
@@ -292,8 +308,6 @@ inline void worker::inheritProperties(entry_t* parent, const entry_t* entry) con
 }
 
 uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
-  LOG(logInfo) << "Adding directory \"" << name << '\"';
-
   p_prepInsertDir->setString(1,name);
   p_prepInsertDir->setUInt(2,parent);
   p_prepInsertDir->setUInt64(3,size);
@@ -311,13 +325,15 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
   return id;
 }
 
-uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
-  LOG(logInfo) << "Adding file \"" << name << '\"';
-
+uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime, const string& hash) {
   p_prepInsertFile->setString(1,name);
   p_prepInsertFile->setUInt(2,parent);
   p_prepInsertFile->setUInt64(3,size);
   p_prepInsertFile->setUInt(4,mtime);
+  if( hash.length() )
+    p_prepInsertFile->setString(5,hash);
+  else
+    p_prepInsertFile->setNull(5,0);
   p_prepInsertFile->execute();
 
   uint32_t id = 0;
@@ -327,14 +343,17 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
   else
     LOG(logError) << "Insert statement failed for " << name;
   delete res;
-  LOG(logDebug) << "inserted file file id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
+  LOG(logDebug) << "inserted file file id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime << " hash " << hash;
   return id;
 }
 
 void worker::parseDirectory(const string& path, uint32_t id) {
+  if( !p_databaseInitialized )
+    initDatabase();
+
   entry_t e = getDirectoryById(id);
   parseDirectory(path, &e);
-  if( e.state == entry_t::entryPropertiesChanged )
+  if( e.id != 0 && e.state == entry_t::entryPropertiesChanged ) //don't write a directory id 0 (no fakepath)
     updateDirectory(e.id, e.size, e.mtime);
 }
 
@@ -397,23 +416,32 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
       } else {
         entry->subSize = 0;
         entry->type = entry_t::file;
+        if( p_hasher ) {
+          LOG(logDebug) << "hash new";
+          hashFile(entry, dirEntryPath); //hash new files if enabled
+        }
       }
       entryCache.push_back(entry);
     } else { //entry is in db, check for changes
       if( entry->type == entry_t::directory )
-          entry->subSize = dirEntryStat.st_size;
+        entry->subSize = dirEntryStat.st_size;
       else {
         entry->subSize = 0;
-        if( (entry->size != (uint64_t)dirEntryStat.st_size) && p_inheritSize ) {
+        if( entry->size != (uint64_t)dirEntryStat.st_size ) {
           entry->size = dirEntryStat.st_size;
           entry->state = entry_t::entryPropertiesChanged; //only flag files for update, decision on directories will be made after parsing
         }
       }
-      if( (entry->mtime != dirEntryStat.st_mtime) && p_inheritMTime ) {
+      if( entry->mtime != dirEntryStat.st_mtime ) {
         entry->mtime = dirEntryStat.st_mtime;
         entry->state = entry_t::entryPropertiesChanged;
       }
-      if( entry->state == entry_t::entryUnknown )
+      if( p_hasher && entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0) ) { //if hasher is enabled and properties are changed or no hash is calculated yet, rehash file
+        LOG(logDebug) << "hash existing";
+        hashFile(entry, dirEntryPath);
+        entry->state = entry_t::entryPropertiesChanged; //force property update
+      }
+      if( entry->state == entry_t::entryUnknown ) //if state is not entryPropertiesChanged, flag it as correct
         entry->state = entry_t::entryOk;
     }
 
@@ -422,6 +450,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
     else
       p_statistics.directories++;
   }
+  closedir(dir);
 
   processChangedEntries(entryCache, ownEntry); //add new files, also insert directories (but not yet mtime/size)
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); ) { //we do not need any file entry_t anymore, just keep directories to lower the recursion's memory footprint
@@ -446,7 +475,6 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   }
 
   LOG(logDebug) << "leaving directory " << path;
-  closedir(dir);
 }
 
 void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry) {
@@ -460,10 +488,12 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
           break;
         }
         case entry_t::entryPropertiesChanged : {
+          LOG(logInfo) << "Updating directory \"" << (*it)->name << '\"';
           updateDirectory( (*it)->id, (*it)->size, (*it)->mtime );
           break;
         }
         case entry_t::entryNew : {
+          LOG(logInfo) << "Inserting directory \"" << (*it)->name << '\"';
           (*it)->id = insertDirectory( (*it)->parent, (*it)->name, (*it)->size, (*it)->mtime );
           (*it)->state = entry_t::entryOk;
           break;
@@ -489,18 +519,20 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
           break;
         }
         case entry_t::entryPropertiesChanged : {
-          LOG(logDebug) << "processChangedEntries() file id " << (*it)->id << " size " << (*it)->size << " mtime " << (*it)->mtime;
-          updateFile( (*it)->id, (*it)->size, (*it)->mtime );
+          LOG(logInfo) << "Updating file \"" << (*it)->name << '\"';
+          updateFile( (*it)->id, (*it)->size, (*it)->mtime, (*it)->hash );
           inheritProperties(parentEntry, *it);
           break;
         }
         case entry_t::entryNew : {
-          (*it)->id = insertFile( (*it)->parent, (*it)->name, (*it)->size, (*it)->mtime );
+          LOG(logInfo) << "Inserting file \"" << (*it)->name << '\"';
+          (*it)->id = insertFile( (*it)->parent, (*it)->name, (*it)->size, (*it)->mtime, (*it)->hash );
           inheritProperties(parentEntry, *it);
           break;
         }
         case entry_t::entryUnknown : //continue to entryDeleted
         case entry_t::entryDeleted : {
+          LOG(logInfo) << "Dropping file \"" << (*it)->name << '\"';
           deleteFile( (*it)->id );
           break;
         }
@@ -514,11 +546,12 @@ void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEnt
   }
 }
 
+//TODO use readPath in parseDirectory?
 worker::entry_t worker::readPath(const string& path) {
   LOG(logDebug) << "reading path " << path;
 
   struct stat64 entryStat; //entry's stat
-  entry_t entry = { 0, 0, string(), 0, 0, 0, entry_t::entryUnknown, entry_t::any };
+  entry_t entry = { .id = 0, .mtime = 0, .name = string(), .parent = 0, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::any, .hash = string() };
 
   if( stat64(path.c_str(), &entryStat) ) {
     LOG(logError) << "stat64() on " << path << " failed: " << errnoString() << endl;
@@ -533,6 +566,8 @@ worker::entry_t worker::readPath(const string& path) {
   else
     entry.type = entry_t::file;
   entry.state = entry_t::entryOk;
+
+  //TODO hashing, with special care about inotify
 
   return entry;
 }
@@ -556,7 +591,6 @@ void worker::setTables(const string& directoryTable, const string& fileTable) {
 }
 
 void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
-  LOG(logInfo) << "Updating directory id " << id;
   LOG(logDebug) << "updating dir id " << id << " size " << size << " mtime " << mtime;
   p_prepUpdateDir->setUInt64(1,size);
   p_prepUpdateDir->setUInt(2,mtime);
@@ -564,16 +598,20 @@ void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
   p_prepUpdateDir->execute();
 }
 
-void worker::updateFile(uint32_t id, uint64_t size, time_t mtime) {
-  LOG(logInfo) << "Updating file id " << id;
-  LOG(logDebug) << "updating file id " << id << " size " << size << " mtime " << mtime;
+void worker::updateFile(uint32_t id, uint64_t size, time_t mtime, const string& hash) {
+  LOG(logDebug) << "updating file id " << id << " size " << size << " mtime " << mtime << " hash " << hash;
   p_prepUpdateFile->setUInt64(1,size);
   p_prepUpdateFile->setUInt(2,mtime);
-  p_prepUpdateFile->setUInt(3,id);
+  if( hash.length() )
+    p_prepUpdateFile->setString(3,hash);
+  else
+    p_prepUpdateFile->setNull(3,0);
+  p_prepUpdateFile->setUInt(4,id);
   p_prepUpdateFile->execute();
 }
 
 void worker::updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime) {
+  LOG(logDetailed) << "Updating directory id " << firstParent << " recursively";
   entry_t e = getDirectoryById(firstParent);
   if( p_inheritMTime && e.mtime < newMTime )
     e.mtime = newMTime;
@@ -671,6 +709,10 @@ void worker::removeWatches(uint32_t id) {
       inotify_rm_watch(p_watchDescriptor, it->first);
 }
 
+void worker::setHasher(Hasher* hasher) {
+  p_hasher = hasher;
+}
+
 void worker::setupWatches(const string& path, uint32_t id) {
   p_prepQueryDirsByParent->setUInt(1,id);
   sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
@@ -688,6 +730,8 @@ void worker::setupWatches(const string& path, uint32_t id) {
     LOG(logError) << "Unable to setup watch for id " << id << " with path \"" << path << '\"';
 }
 
+//TODO implement hashing
+//TODO implement connection checking / keep alive
 void worker::watch(const string& path, uint32_t id) {
   p_watches.clear();
   LOG(logDebug) << "initializing inotify";
@@ -739,7 +783,7 @@ void worker::watch(const string& path, uint32_t id) {
           const string path = p.second + '/' + event->name;
           entry_t e = readPath( path );
           if( e.state == entry_t::entryOk ) { //readPath successful
-            insertFile(p.first, event->name, e.size, e.mtime);
+            insertFile(p.first, event->name, e.size, e.mtime, e.hash);
             updateTreeProperties(p.first, e.size, e.mtime);
           } else
             LOG(logError) << "failed to read path \"" << path << '\"';
@@ -770,11 +814,11 @@ void worker::watch(const string& path, uint32_t id) {
           entry_t dbEntry = getFileByName(event->name, p.first);
           if( dbEntry.id == 0 ) {
             LOG(logWarning) << "Modified file " << event->name << " was not yet in database, fixing.";
-            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime);
+            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime, string()); //TODO hashing
             updateTreeProperties(p.first, fsEntry.size, fsEntry.mtime);
           } else {
             LOG(logInfo) << "Updating file " << event->name;
-            updateFile(dbEntry.id, fsEntry.size, fsEntry.mtime);
+            updateFile(dbEntry.id, fsEntry.size, fsEntry.mtime, string()); //TODO hashing
             updateTreeProperties(p.first, fsEntry.size - dbEntry.size, fsEntry.mtime);
           }
           break;
@@ -814,7 +858,7 @@ void worker::watch(const string& path, uint32_t id) {
           const string path = p.second + '/' + event->name;
           entry_t e = readPath( path );
           if( e.state == entry_t::entryOk ) { //readPath successful
-            insertFile(p.first, event->name, e.size, e.mtime);
+            insertFile(p.first, event->name, e.size, e.mtime, string()); //TODO hashing
             updateTreeProperties(p.first, e.size, e.mtime);
           } else
             LOG(logError) << "failed to read path \"" << path << '\"';

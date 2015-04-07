@@ -1,24 +1,21 @@
 CC=g++
-CFLAGS=-c -g -O2 -Wall -Wextra -I /usr/include/mysql-connector/
-LDFLAGS=-lmysqlcppconn -lstdc++
+CFLAGS=-c -g -O1 -Wall -Wextra -I /usr/include/mysql-connector/
+LDFLAGS=-lmysqlcppconn -lstdc++ -lrhash
 EXECUTABLE=fscrawl
+
+SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp
+OBJS = $(SRCS:%.cpp=%.o)
 
 all: fscrawl
 
-release: fscrawl.o logger.o worker.o
-	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release fscrawl.o logger.o worker.o
+release: $(OBJS)
+	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release $(OBJS)
 
-fscrawl: fscrawl.o logger.o worker.o
-	$(CC) $(LDFLAGS) -o $(EXECUTABLE) fscrawl.o logger.o worker.o
+fscrawl: $(OBJS)
+	$(CC) $(LDFLAGS) -o $(EXECUTABLE) $(OBJS)
 
-fscrawl.o: fscrawl.cpp worker.o
-	$(CC) $(CFLAGS) fscrawl.cpp
-
-logger.o: logger.cpp
-	$(CC) $(CFLAGS) logger.cpp
-
-worker.o: worker.cpp logger.o
-	$(CC) $(CFLAGS) worker.cpp
+%.o: %.cpp
+	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f *.o fscrawl fscrawl-release
+	rm -f $(OBJS) fscrawl fscrawl-release
