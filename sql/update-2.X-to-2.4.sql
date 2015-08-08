@@ -1,0 +1,1 @@
+ALTER TABLE fscrawl_files ADD hash VARCHAR(40) DEFAULT NULL;
