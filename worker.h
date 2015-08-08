@@ -43,25 +43,31 @@ public:
   void setTables(const string& directoryTable, const string& fileTable);
   void setHasher(Hasher* hasher);
   Hasher* getHasher() const;
+  void setForceHashing(bool force);
+  bool getForceHashing() const;
 
   const statistics& getStatistics() const;
+  void resetStatistics();
 
-  //The worker ascends to the specified path and returns its id, creates a directory if not specified different
-  uint32_t ascendPath(string path, entry_t::type_t type = entry_t::directory, bool createDirectory = true);
+  //The worker traces the path from "id" up the id "upToId", its name is not appended to the returned path anymore.
+  string ascendPath(uint32_t id, uint32_t upToId = 0, entry_t::type_t type = entry_t::file);
+  //The worker descends to the specified path and returns its id, creates a directory if not specified different
+  uint32_t descendPath(string path, entry_t::type_t type = entry_t::directory, bool createDirectory = true);
   //Clear all database contents
   void clearDatabase();
   //Delete directory by id recursively
   void deleteDirectory(uint32_t id);
   //Delete file by id
   void deleteFile(uint32_t id);
-  //The worker traces the path from id up to the base (including a faked path)
-  string descendPath(uint32_t id, entry_t::type_t type);
   //Start to parse the directory path. path will be stripped from the files' path. Will be inserted under parent "id".
   void parseDirectory(const string& path, uint32_t id = 0);
   //Verify the tree consistency. Resource hungry!
   void verifyTree();
   //Watches the directory id including subdirectories
   void watch(const string& path, uint32_t id = 0);
+  //Check the hash of all files under directory "parent", prepending "path" to the files relative path from the database
+  //Only files existing in the database will be crawled, the filesystem path is built from database information.
+  void hashCheck(const string& path, uint32_t parent = 0);
 
 private:
   void cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache);
@@ -98,6 +104,7 @@ private:
   statistics p_statistics;
   int p_watchDescriptor;
   map< int, pair<uint32_t,string> > p_watches; //stores inotify watch descriptors and their corresponding ids and paths
+  bool p_forceHashing;
 
   Hasher* p_hasher;
 

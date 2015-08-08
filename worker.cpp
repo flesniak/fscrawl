@@ -42,33 +42,21 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
 worker::~worker() {
 }
 
-uint32_t worker::ascendPath(string path, entry_t::type_t type, bool createDirectory) {
-  uint32_t pathId = 0;
+string worker::ascendPath(uint32_t id, uint32_t downToId, entry_t::type_t type) {
   if( !p_databaseInitialized )
     initDatabase();
-  if( !path.empty() ) {
-    LOG(logDetailed) << "Ascending into specified path " << path;
-    while( !path.empty() ) {
-      string pathElement = path.substr(0,path.find('/'));
-      LOG(logDebug) << "Getting path element " << pathElement;
-      path.erase(0,pathElement.length()+1); //erase pathElement and slash
-      if( pathElement.empty() ) //strip leading and multiple slashes
-        continue;
-      entry_t subEntry = getDirectoryByName(pathElement,pathId);
-      if( subEntry.id == 0 ) { //directory not found
-        if( type == entry_t::directory ) {
-          if( createDirectory )
-            subEntry.id = insertDirectory(pathId,pathElement,0,time(0));
-          else
-            throw("unable to ascend path, unexistent directory");
-        } else {
-          subEntry = getFileByName(pathElement,pathId);
-        }
-      }
-      pathId = subEntry.id;
-    }
-  }
-  return pathId;
+  if( id != downToId ) {
+    entry_t e;
+    if( type == entry_t::file )
+      e = getFileById(id);
+    else
+      e = getDirectoryById(id);
+    if( e.name.empty() )
+      throw("unable to ascend path, unexistent entry");
+    else
+      return ascendPath(e.parent,downToId,entry_t::directory)+'/'+e.name;
+  } else
+    return ""; //don't attach a leading slash
 }
 
 void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache) {
@@ -109,6 +97,8 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
 }
 
 void worker::clearDatabase() {
+  if( !p_databaseInitialized )
+    initDatabase();
   p_stmt->execute("DROP TABLE "+p_fileTable);
   p_stmt->execute("DROP TABLE "+p_directoryTable);
   LOG(logWarning) << "Database tables dropped, data is now gone";
@@ -116,6 +106,8 @@ void worker::clearDatabase() {
 }
 
 void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" including all subdirs/files
+  if( !p_databaseInitialized )
+    initDatabase();
   LOG(logDebug) << "deleting directory id " << id;
   p_prepQueryDirsByParent->setUInt(1,id);
   sql::ResultSet *res = p_prepQueryDirsByParent->executeQuery();
@@ -139,24 +131,40 @@ void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" i
 }
 
 void worker::deleteFile(uint32_t id) {
+  if( !p_databaseInitialized )
+    initDatabase();
   LOG(logDebug) << "deleting file id " << id;
   p_prepDeleteFile->setUInt(1,id);
   p_prepDeleteFile->execute();
 }
 
-string worker::descendPath(uint32_t id, entry_t::type_t type) {
-  if( id != 0 ) {
-    entry_t e;
-    if( type == entry_t::file )
-      e = getFileById(id);
-    else
-      e = getDirectoryById(id);
-    if( e.name.empty() )
-      throw("unable to descend path, unexistent entry");
-    else
-      return descendPath(e.parent,entry_t::directory)+'/'+e.name;
-  } else
-    return "/";
+uint32_t worker::descendPath(string path, entry_t::type_t type, bool createDirectory) {
+  uint32_t pathId = 0;
+  if( !p_databaseInitialized )
+    initDatabase();
+  if( !path.empty() ) {
+    LOG(logDetailed) << "Descending into specified path " << path;
+    while( !path.empty() ) {
+      string pathElement = path.substr(0,path.find('/'));
+      LOG(logDebug) << "Getting path element " << pathElement;
+      path.erase(0,pathElement.length()+1); //erase pathElement and slash
+      if( pathElement.empty() ) //strip leading and multiple slashes
+        continue;
+      entry_t subEntry = getDirectoryByName(pathElement,pathId);
+      if( subEntry.id == 0 ) { //directory not found
+        if( type == entry_t::directory ) {
+          if( createDirectory )
+            subEntry.id = insertDirectory(pathId,pathElement,0,time(0));
+          else
+            throw("unable to descend path, unexistent directory");
+        } else {
+          subEntry = getFileByName(pathElement,pathId);
+        }
+      }
+      pathId = subEntry.id;
+    }
+  }
+  return pathId;
 }
 
 string worker::errnoString() {
@@ -222,6 +230,10 @@ worker::entry_t worker::getFileByName(const string& name, uint32_t parent) {
   return e;
 }
 
+bool worker::getForceHashing() const {
+  return p_forceHashing;
+}
+
 const worker::statistics& worker::getStatistics() const {
   return p_statistics;
 }
@@ -231,8 +243,44 @@ void worker::hashFile(entry_t* entry, const string& path) const {
     return;
   Hasher::hashStatus_t status = p_hasher->hash(path, entry->hash);
   if( status != Hasher::hashSuccess ) {
-    LOG(logError) << "Failed to hash entry " << entry->id << ", setting blank hash";
+    LOG(logError) << "Failed to hash entry " << entry->id;
     entry->hash.clear();
+  }
+}
+
+void worker::hashCheck(const string& path, uint32_t parent) {
+  if( !p_databaseInitialized )
+    initDatabase();
+
+  struct stat entryStat;
+  vector<entry_t*> entryCache;
+  LOG(logDebug) << "fetching directory entries from db for caching";
+  cacheDirectoryEntriesFromDB(parent, entryCache);
+
+  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) {
+    string subpath = path+"/"+(*it)->name;
+    if( (*it)->type == entry_t::file ) {
+      LOG(logDebug) << "start hashing file " << subpath;
+      string dbHash = (*it)->hash;
+      if( dbHash.length() > 0 ) {
+        if( stat(subpath.c_str(), &entryStat) == 0 ) {
+          hashFile(*it, subpath);
+          if( (*it)->hash.length() ) { //skip empty hash results, error has been reported by hashFile
+            if( (*it)->hash != dbHash )
+              LOG(logError) << "Hash FAILED for file " << subpath << ": Expected " << dbHash << ", got " << (*it)->hash;
+            else
+              LOG(logInfo) << "Hash OK: " << subpath;
+          }
+        } else
+          LOG(logError) << "Hash FAILED, file does not exist: " << subpath;
+      } else
+        LOG(logWarning) << "Database does not contain a hash for " << subpath;
+      p_statistics.files++;
+    } else {
+      LOG(logDetailed) << "Entering subdirectory " << subpath;
+      hashCheck(subpath, (*it)->id);
+      p_statistics.directories++;
+    }
   }
 }
 
@@ -292,8 +340,7 @@ void worker::initDatabase() {
 
   p_prepLastInsertID = p_connection->prepareStatement("SELECT LAST_INSERT_ID()");
 
-  p_statistics.files = 0;
-  p_statistics.directories = 0;
+  resetStatistics();
 
   p_databaseInitialized = true;
 }
@@ -417,7 +464,6 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
         entry->subSize = 0;
         entry->type = entry_t::file;
         if( p_hasher ) {
-          LOG(logDebug) << "hash new";
           hashFile(entry, dirEntryPath); //hash new files if enabled
         }
       }
@@ -436,8 +482,8 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
         entry->mtime = dirEntryStat.st_mtime;
         entry->state = entry_t::entryPropertiesChanged;
       }
-      if( p_hasher && entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0) ) { //if hasher is enabled and properties are changed or no hash is calculated yet, rehash file
-        LOG(logDebug) << "hash existing";
+      //if hasher is enabled and properties are changed or no hash is calculated yet or hashing is forced, rehash file
+      if( p_hasher && entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0 || p_forceHashing) ) {
         hashFile(entry, dirEntryPath);
         entry->state = entry_t::entryPropertiesChanged; //force property update
       }
@@ -572,9 +618,36 @@ worker::entry_t worker::readPath(const string& path) {
   return entry;
 }
 
+void worker::removeWatches(uint32_t id) {
+  p_prepQueryDirsByParent->setUInt(1,id);
+  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
+  vector<uint32_t> cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
+  while( res->next() )
+    cache.push_back(res->getUInt(1));
+  for( vector<uint32_t>::iterator it = cache.begin(); it != cache.end(); it++ )
+    removeWatches(*it);
+  LOG(logDebug) << "removing watch of id " << id;
+  for(map< int, pair<uint32_t,string> >::iterator it = p_watches.begin(); it != p_watches.end(); it++)
+    if( it->second.first == id )
+      inotify_rm_watch(p_watchDescriptor, it->first);
+}
+
+void worker::resetStatistics() {
+  p_statistics.files = 0;
+  p_statistics.directories = 0;
+}
+
 void worker::setConnection(sql::Connection* dbConnection) {
   p_connection = dbConnection;
   p_databaseInitialized = false;
+}
+
+void worker::setForceHashing(bool force) {
+  p_forceHashing = force;
+}
+
+void worker::setHasher(Hasher* hasher) {
+  p_hasher = hasher;
 }
 
 void worker::setInheritance(bool inheritSize, bool inheritMTime) {
@@ -588,6 +661,23 @@ void worker::setTables(const string& directoryTable, const string& fileTable) {
   if( !fileTable.empty() )
     p_fileTable = fileTable;
   p_databaseInitialized = false;
+}
+
+void worker::setupWatches(const string& path, uint32_t id) {
+  p_prepQueryDirsByParent->setUInt(1,id);
+  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
+  vector< pair<uint32_t, string> > cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
+  while( res->next() )
+    cache.push_back( make_pair<uint32_t, string>(res->getUInt(1), res->getString(2)) );
+  delete res;
+  for( vector< pair<uint32_t, string> >::iterator it = cache.begin(); it != cache.end(); it++ )
+    setupWatches(path+'/'+it->second, it->first);
+  LOG(logDetailed) << "Setting up watch for \"" << path << "\" (id " << id << ')';
+  int dirWatchDescriptor = inotify_add_watch( p_watchDescriptor, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR ); // IN_MOVE_SELF
+  if( dirWatchDescriptor != 0 )
+    p_watches[dirWatchDescriptor] = make_pair<uint32_t,string>(id,path);
+  else
+    LOG(logError) << "Unable to setup watch for id " << id << " with path \"" << path << '\"';
 }
 
 void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
@@ -625,6 +715,7 @@ void worker::updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t
 void worker::verifyTree() {
   if( !p_databaseInitialized )
     initDatabase();
+
   list<uint32_t>* idCache = new list<uint32_t>; //contains valid ids that have a connection to parent 0
   list<uint32_t>::iterator cacheIterator;
   sql::PreparedStatement *prepGetDirParent = p_connection->prepareStatement("SELECT parent FROM "+p_directoryTable+" WHERE id=?");
@@ -695,44 +786,12 @@ void worker::verifyTree() {
   delete idCache;
 }
 
-void worker::removeWatches(uint32_t id) {
-  p_prepQueryDirsByParent->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
-  vector<uint32_t> cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
-  while( res->next() )
-    cache.push_back(res->getUInt(1));
-  for( vector<uint32_t>::iterator it = cache.begin(); it != cache.end(); it++ )
-    removeWatches(*it);
-  LOG(logDebug) << "removing watch of id " << id;
-  for(map< int, pair<uint32_t,string> >::iterator it = p_watches.begin(); it != p_watches.end(); it++)
-    if( it->second.first == id )
-      inotify_rm_watch(p_watchDescriptor, it->first);
-}
-
-void worker::setHasher(Hasher* hasher) {
-  p_hasher = hasher;
-}
-
-void worker::setupWatches(const string& path, uint32_t id) {
-  p_prepQueryDirsByParent->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
-  vector< pair<uint32_t, string> > cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
-  while( res->next() )
-    cache.push_back( make_pair<uint32_t, string>(res->getUInt(1), res->getString(2)) );
-  delete res;
-  for( vector< pair<uint32_t, string> >::iterator it = cache.begin(); it != cache.end(); it++ )
-    setupWatches(path+'/'+it->second, it->first);
-  LOG(logDetailed) << "Setting up watch for \"" << path << "\" (id " << id << ')';
-  int dirWatchDescriptor = inotify_add_watch( p_watchDescriptor, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR ); // IN_MOVE_SELF
-  if( dirWatchDescriptor != 0 )
-    p_watches[dirWatchDescriptor] = make_pair<uint32_t,string>(id,path);
-  else
-    LOG(logError) << "Unable to setup watch for id " << id << " with path \"" << path << '\"';
-}
-
-//TODO implement hashing
+//TODO implement hashing during watch
 //TODO implement connection checking / keep alive
 void worker::watch(const string& path, uint32_t id) {
+  if( !p_databaseInitialized )
+    initDatabase();
+
   p_watches.clear();
   LOG(logDebug) << "initializing inotify";
   p_watchDescriptor = inotify_init();

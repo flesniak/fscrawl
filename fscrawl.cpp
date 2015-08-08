@@ -14,9 +14,10 @@
 using namespace std;
 
 void usage() {
-  LOG(logInfo) << "Usage: fscrawl [OPTIONS] <basedir|-c|-C|-V>";
+  LOG(logInfo) << "Usage: fscrawl [OPTIONS] <BASEDIR|-V|--clear|--purge>";
   LOG(logInfo) << "  -d, --database\tDatabase to use (default: \"fscrawl\")";
-  LOG(logInfo) << "  -f, --fakepath\tInstead of having basedir as absolute root directory, parse all files as if they were unter this fakepath";
+  LOG(logInfo) << "  -f, --fakepath\tInstead of having BASEDIR as absolute root directory,";
+  LOG(logInfo) << "                \tparse all files as if they were unter this fakepath";
   LOG(logInfo) << "  -h, --help\tDisplay this help and exit";
   LOG(logInfo) << "  -l, --logfile\tLog to file instead of stderr";
   LOG(logInfo) << "  -m, --host\tConnect to host (default: \"localhost\"";
@@ -24,21 +25,27 @@ void usage() {
   LOG(logInfo) << "  -q, --quiet\tOnly display severe errors. Useful for cron-jobbing";
   LOG(logInfo) << "  -u, --user\tSpecify database user (default: \"root\")";
   LOG(logInfo) << "  -v, --verbose\tIncrease log level (0x=info,1x=detailed,2x=debug)";
-  LOG(logInfo) << "  -w, --watch\tWatch the given basedir after refreshing (program will block)";
-  LOG(logInfo) << "  -T, --tth\tCalculate the tth hash of every file";
-  LOG(logInfo) << "  -M, --md5\tCalculate the md5 hash of every file";
+  LOG(logInfo) << "  -w, --watch\tWatch the given BASEDIR after refreshing (program will block)";
   LOG(logInfo) << "  -S, --sha1\tCalculate the sha1 hash of every file";
+  LOG(logInfo) << "  -M, --md5\tCalculate the md5 hash of every file";
+  LOG(logInfo) << "  -T, --tth\tCalculate the tth hash of every file";
+  LOG(logInfo) << "  -c, --check\tCheck the hash of every file (needs -T/M/S)";
+  LOG(logInfo) << "             \tNo crawling will be done if checking is enabled";
+  LOG(logInfo) << "  -F, --force-hashing\tForce recalculation of every hash (use when changing algorithm)";
   LOG(logInfo) << "  --file-table\tTable to use for files (default: \"fscrawl_files\")";
   LOG(logInfo) << "  --dir-table\tTable to use for directories (default: \"fscrawl_directories\")";
-  LOG(logInfo) << "The following options may be called without a basedir, then no scanning will be done:";
-  LOG(logInfo) << "  -c, --clear\tDelete the tree for this fakepath, others will be kept";
-  LOG(logInfo) << "  -C, --clearall\tClear both tables completely";
+  LOG(logInfo) << "The following options may be called without BASEDIR, the database won't be changed:";
   LOG(logInfo) << "  -V, --verify\tVerify the tree structure - takes some time";
+  LOG(logInfo) << "  --clear\tDelete the tree for this fakepath, others will be kept";
+  LOG(logInfo) << "  --purge\tDelete all data from both tables completely";
   LOG(logInfo) << "fscrawl "VERSION;
+  exit(1);
 }
 
 int main(int argc, char* argv[]) {
-  bool verify = false;
+  bool verifyTree = false;
+  bool hashCheck = false;
+  bool forceHashing = false;
   bool watch = false;
   Hasher::hashType_t hashType = Hasher::noHash;
   enum { clearNothing, clearFakepath, clearAll } clear = clearNothing;
@@ -54,10 +61,10 @@ int main(int argc, char* argv[]) {
   Logger::logLevel() = logInfo;
   Logger::facility() = new LoggerFacilityConsole;
 
+  //TODO: maybe switch to gnu getopt in future?
   for(int i = 1; i < argc; i++) {
     if( strcmp(argv[i],"-h") == 0 || strcmp(argv[i],"--help") == 0 ) {
       usage();
-      exit(1);
     }
     if( strcmp(argv[i],"-v") == 0 || strcmp(argv[i],"--verbose") == 0 ) {
       Logger::logLevel() = (logLevel_t)( (uint32_t)Logger::logLevel() + 1 );
@@ -65,10 +72,6 @@ int main(int argc, char* argv[]) {
     }
     if( strcmp(argv[i],"-vv") == 0 ) {
       Logger::logLevel() = (logLevel_t)( (uint32_t)Logger::logLevel() + 2 );
-      continue;
-    }
-    if( strcmp(argv[i],"-vvv") == 0 ) {
-      Logger::logLevel() = (logLevel_t)( (uint32_t)Logger::logLevel() + 3 );
       continue;
     }
     if( strcmp(argv[i],"-q") == 0 || strcmp(argv[i],"--quiet") == 0 ) {
@@ -79,7 +82,6 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected user";
         usage();
-        exit(1);
       }
       i++;
       mysql_user = argv[i];
@@ -89,7 +91,6 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected password";
         usage();
-        exit(1);
       }
       i++;
       mysql_password = argv[i];
@@ -99,7 +100,6 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected host";
         usage();
-        exit(1);
       }
       i++;
       mysql_host = argv[i];
@@ -109,7 +109,6 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected database";
         usage();
-        exit(1);
       }
       i++;
       mysql_database = argv[i];
@@ -119,7 +118,6 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected file table";
         usage();
-        exit(1);
       }
       i++;
       fileTable = argv[i];
@@ -129,17 +127,16 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected directory table";
         usage();
-        exit(1);
       }
       i++;
       directoryTable = argv[i];
       continue;
     }
-    if( strcmp(argv[i],"-c") == 0 || strcmp(argv[i],"--clear") == 0 ) {
+    if( strcmp(argv[i],"--clear") == 0 ) {
       clear = clearFakepath;
       continue;
     }
-    if( strcmp(argv[i],"-C") == 0 || strcmp(argv[i],"--clearall") == 0 ) {
+    if( strcmp(argv[i],"--purge") == 0 ) {
       clear = clearAll;
       continue;
     }
@@ -147,7 +144,6 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected fakepath";
         usage();
-        exit(1);
       }
       i++;
       fakepath = argv[i];
@@ -157,14 +153,17 @@ int main(int argc, char* argv[]) {
       if( i+1 >= argc ) {
         LOG(logError) << "expected logfile";
         usage();
-        exit(1);
       }
       i++;
       logfile = argv[i];
       continue;
     }
     if( strcmp(argv[i],"-V") == 0 || strcmp(argv[i],"--verify") == 0 ) {
-      verify = true;
+      verifyTree = true;
+      continue;
+    }
+    if( strcmp(argv[i],"-c") == 0 || strcmp(argv[i],"--check") == 0 ) {
+      hashCheck = true;
       continue;
     }
     if( strcmp(argv[i],"-w") == 0 || strcmp(argv[i],"--watch") == 0 ) {
@@ -174,7 +173,7 @@ int main(int argc, char* argv[]) {
     if( strcmp(argv[i],"-T") == 0 || strcmp(argv[i],"--tth") == 0 ) {
       if( hashType != Hasher::noHash ) {
         LOG(logError) << "Multiple hash algorithms specified";
-        exit(1);
+        usage();
       }
       hashType = Hasher::tth;
       continue;
@@ -182,7 +181,7 @@ int main(int argc, char* argv[]) {
     if( strcmp(argv[i],"-M") == 0 || strcmp(argv[i],"--md5") == 0 ) {
       if( hashType != Hasher::noHash ) {
         LOG(logError) << "Multiple hash algorithms specified";
-        exit(1);
+        usage();
       }
       hashType = Hasher::md5;
       continue;
@@ -190,22 +189,24 @@ int main(int argc, char* argv[]) {
     if( strcmp(argv[i],"-S") == 0 || strcmp(argv[i],"--sha1") == 0 ) {
       if( hashType != Hasher::noHash ) {
         LOG(logError) << "Multiple hash algorithms specified";
-        exit(1);
+        usage();
       }
       hashType = Hasher::sha1;
       continue;
     }
+    if( strcmp(argv[i],"-F") == 0 || strcmp(argv[i],"--force-hashing") == 0 ) {
+      forceHashing = true;
+      continue;
+    }
     if( strncmp(argv[i],"-",1) == 0 ) {
-      LOG(logError) << "unknown argument " << argv[i];
+      LOG(logError) << "Unknown argument " << argv[i];
       usage();
-      exit(1);
     }
     if( basedir.empty() )
       basedir = argv[i];
     else {
-      LOG(logError) << "invalid additional argument " << argv[i];
+      LOG(logError) << "Invalid additional argument " << argv[i];
       usage();
-      exit(1);
     }
   }
 
@@ -214,7 +215,6 @@ int main(int argc, char* argv[]) {
     if( !lff->openLogFile(logfile, false) ) {
       LOG(logError) << "failed to open logfile \"" << logfile << '\"';
       usage();
-      exit(1);
     }
     delete Logger::facility();
     Logger::facility() = lff;
@@ -222,16 +222,27 @@ int main(int argc, char* argv[]) {
 
   LOG(logInfo) << "fscrawl "VERSION << " started";
 
+  //check if our given commands can operate without basedir
   if( basedir.empty() ) {
-    if( clear == clearNothing && !verify ) { //if no basedir is given but clear is set, only clear the db and exit
-      LOG(logError) << "no basedir given";
+    if( clear == clearNothing && !verifyTree ) { //if no basedir is given but clear is set, only clear the db and exit
+      LOG(logError) << "No basedir given";
       usage();
-      exit(1);
     }
   }
   else
     if( basedir.at(basedir.size()-1) == '/' ) //don't try that on an empty basedir string
       basedir.erase(basedir.size()-1);
+
+  //check parameters that need a hash algorithm selected
+  if( (hashCheck || forceHashing) && hashType == Hasher::noHash ) {
+    LOG(logError) << "No hashing algorithm selected";
+    usage();
+  }
+
+  if( (watch || forceHashing) && hashCheck ) {
+    LOG(logError) << "No crawling-dependant jobs (watching, (forced) hashing) can be combined with hash checking.";
+    usage();
+  }
 
   sql::Driver *driver = 0;
   sql::Connection *con = 0;
@@ -257,43 +268,53 @@ int main(int argc, char* argv[]) {
     w->clearDatabase();
   }
 
-  if( verify ) {
+  if( verifyTree ) {
     LOG(logInfo) << "Verifying tree";
     w->verifyTree();
     LOG(logInfo) << "Tree verified";
   }
 
-  //ascend to given fakepath
-  uint32_t fakepathId = 0;
+  //descend to given fakepath
+  uint32_t fakepathId = 0; //if no fakepath is used, 0 is the root parent directory id
   if( !fakepath.empty() ) {
     LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
-    fakepathId = w->ascendPath(fakepath);
+    fakepathId = w->descendPath(fakepath);
     LOG(logDebug) << "got fakepathId " << fakepathId;
     if( clear == clearFakepath ) {
       LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
       w->deleteDirectory(fakepathId);
       if( !basedir.empty() )
-        fakepathId = w->ascendPath(fakepath);
+        fakepathId = w->descendPath(fakepath);
     }
   }
 
   if( !basedir.empty() ) {
     //Save starting time
-    LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
     time_t start = time(0);
 
-    w->parseDirectory(basedir, fakepathId);
+    if( hashCheck ) { //do a hash check, skip crawling!
+      LOG(logInfo) << "Checking hashes of files in directory \"" << basedir << '\"';
+      w->hashCheck(basedir, fakepathId);
+    } else { //normal crawling
+      LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
+      w->parseDirectory(basedir, fakepathId);
+    }
 
     //Get time now, calculate and output duration
     double duration = difftime(time(0),start);
     unsigned int hours, minutes;
-    for(hours = 0; duration > 3600; hours++) //Count hours
+    for(hours = 0; duration > 3600; hours++)
       duration -= 3600;
-    for(minutes = 0; duration > 60; minutes++) //Count minutes
+    for(minutes = 0; duration > 60; minutes++)
       duration -= 60;
-    LOG(logInfo) << "Parsed " << w->getStatistics().files << " files and " << w->getStatistics().directories << " directories in " << hours << "h" << minutes << "m" << duration << "s";
+    LOG(logInfo) << "Processed "
+                 << w->getStatistics().files << " files and "
+                 << w->getStatistics().directories << " directories in "
+                 << hours << "h"
+                 << minutes << "m"
+                 << duration << "s";
 
-    if( watch ) {
+    if( watch ) { //hashCheck && watch is already filtered out above
       LOG(logInfo) << "Running watch on " << fakepath;
       w->watch(basedir,fakepathId);
     }
