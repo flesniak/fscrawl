@@ -7,7 +7,7 @@ using namespace std;
 
 class Hasher {
 public:
-  enum hashType_t { noHash, md5, sha1, tth };
+  enum hashType_t { noHash, md5, sha1, tth, hashTypeCount };
   enum hashStatus_t { hashSuccess, hashError, noHashSelected };
 
   Hasher(hashType_t type = noHash);

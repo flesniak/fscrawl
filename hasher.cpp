@@ -39,11 +39,12 @@ Hasher::hashStatus_t Hasher::hash(const string& filename, string& hash) {
   }
 
   char output[130];
+  size_t length = 0;
   if( p_hashType == tth )
-    rhash_print_bytes(output, digest, rhash_get_digest_size(rhashType), (RHPR_BASE32 | RHPR_UPPERCASE));
+    length = rhash_print_bytes(output, digest, rhash_get_digest_size(rhashType), RHPR_BASE32);
   else
-    rhash_print_bytes(output, digest, rhash_get_digest_size(RHASH_SHA1), (RHPR_HEX | RHPR_UPPERCASE));
-  hash = string(output);
+    length = rhash_print_bytes(output, digest, rhash_get_digest_size(rhashType), RHPR_HEX);
+  hash = string(output, length);
 
   LOG(logDetailed) << "Calculated " << rhash_get_name(rhashType) << " hash of file " << filename << ": " << hash;
   return hashSuccess;

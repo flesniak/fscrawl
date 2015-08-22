@@ -262,6 +262,7 @@ void worker::hashCheck(const string& path, uint32_t parent) {
     if( (*it)->type == entry_t::file ) {
       LOG(logDebug) << "start hashing file " << subpath;
       string dbHash = (*it)->hash;
+      transform(dbHash.begin(), dbHash.end(), dbHash.begin(), ::tolower);
       if( dbHash.length() > 0 ) {
         if( stat(subpath.c_str(), &entryStat) == 0 ) {
           hashFile(*it, subpath);

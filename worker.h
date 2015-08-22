@@ -32,6 +32,7 @@ public:
     /* entryUnknown: fresh entries from database (cached or directly retrieved), not yet checked against filesystem
      * entryOk: entry stats equal filesystem stats
      * entryDeleted: entry was deleted in filesystem
+     * entryPropertiesChanged: entry stats changed, have to be updated in db
      * entryNew: entry not in database yet
      */
     enum type_t { file, directory, any } type;
