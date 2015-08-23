@@ -3,6 +3,7 @@
 #include <string>
 
 #include <cppconn/driver.h>
+#include <cppconn/exception.h>
 #include <mysql_connection.h>
 
 #include "worker.h"
@@ -38,7 +39,7 @@ void usage() {
   LOG(logInfo) << "  -V, --verify\tVerify the tree structure - takes some time";
   LOG(logInfo) << "  --clear\tDelete the tree for this fakepath, others will be kept";
   LOG(logInfo) << "  --purge\tDelete all data from both tables completely";
-  LOG(logInfo) << "fscrawl "VERSION;
+  LOG(logInfo) << "fscrawl" << VERSION;
   exit(1);
 }
 
@@ -249,8 +250,13 @@ int main(int argc, char* argv[]) {
   try {
     LOG(logInfo) << "Connecting to SQL server";
     driver = get_driver_instance();
-    con = driver->connect(mysql_host,mysql_user,mysql_password);
-    con->setSchema(mysql_database);
+    sql::ConnectOptionsMap options;
+    options["hostName"] = mysql_host;
+    options["userName"] = mysql_user;
+    options["password"] = mysql_password;
+    options["schema"] = mysql_database;
+    options["OPT_RECONNECT"] = true;
+    con = driver->connect(options);
   } catch( exception& e ) {
     LOG(logError) << "Failed to connect: " << e.what();
     exit(1);
@@ -320,8 +326,11 @@ int main(int argc, char* argv[]) {
         w->watch(basedir,fakepathId);
       }
     }
+  } catch( sql::SQLException& e ) {
+    LOG(logError) << "SQL Exception: " << e.what();
+    exit(1);
   } catch( exception& e ) {
-    LOG(logError) << e.what();
+    LOG(logError) << "Unhandled Exception: " << e.what();
     exit(1);
   }
 
