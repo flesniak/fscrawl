@@ -220,7 +220,7 @@ int main(int argc, char* argv[]) {
     Logger::facility() = lff;
   }
 
-  LOG(logInfo) << "fscrawl "VERSION << " started";
+  LOG(logInfo) << "fscrawl " << VERSION << " started";
 
   //check if our given commands can operate without basedir
   if( basedir.empty() ) {
@@ -263,61 +263,66 @@ int main(int argc, char* argv[]) {
   if( hashType != Hasher::noHash )
     w->setHasher( new Hasher(hashType) );
 
-  if( clear == clearAll ) {
-    LOG(logWarning) << "Clearing database";
-    w->clearDatabase();
-  }
-
-  if( verifyTree ) {
-    LOG(logInfo) << "Verifying tree";
-    w->verifyTree();
-    LOG(logInfo) << "Tree verified";
-  }
-
-  //descend to given fakepath
-  uint32_t fakepathId = 0; //if no fakepath is used, 0 is the root parent directory id
-  if( !fakepath.empty() ) {
-    LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
-    fakepathId = w->descendPath(fakepath);
-    LOG(logDebug) << "got fakepathId " << fakepathId;
-    if( clear == clearFakepath ) {
-      LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
-      w->deleteDirectory(fakepathId);
-      if( !basedir.empty() )
-        fakepathId = w->descendPath(fakepath);
-    }
-  }
-
-  if( !basedir.empty() ) {
-    //Save starting time
-    time_t start = time(0);
-
-    if( hashCheck ) { //do a hash check, skip crawling!
-      LOG(logInfo) << "Checking hashes of files in directory \"" << basedir << '\"';
-      w->hashCheck(basedir, fakepathId);
-    } else { //normal crawling
-      LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
-      w->parseDirectory(basedir, fakepathId);
+  try {
+    if( clear == clearAll ) {
+      LOG(logWarning) << "Clearing database";
+      w->clearDatabase();
     }
 
-    //Get time now, calculate and output duration
-    double duration = difftime(time(0),start);
-    unsigned int hours, minutes;
-    for(hours = 0; duration > 3600; hours++)
-      duration -= 3600;
-    for(minutes = 0; duration > 60; minutes++)
-      duration -= 60;
-    LOG(logInfo) << "Processed "
-                 << w->getStatistics().files << " files and "
-                 << w->getStatistics().directories << " directories in "
-                 << hours << "h"
-                 << minutes << "m"
-                 << duration << "s";
-
-    if( watch ) { //hashCheck && watch is already filtered out above
-      LOG(logInfo) << "Running watch on " << fakepath;
-      w->watch(basedir,fakepathId);
+    if( verifyTree ) {
+      LOG(logInfo) << "Verifying tree";
+      w->verifyTree();
+      LOG(logInfo) << "Tree verified";
     }
+
+    //descend to given fakepath
+    uint32_t fakepathId = 0; //if no fakepath is used, 0 is the root parent directory id
+    if( !fakepath.empty() ) {
+      LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
+      fakepathId = w->descendPath(fakepath);
+      LOG(logDebug) << "got fakepathId " << fakepathId;
+      if( clear == clearFakepath ) {
+        LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';
+        w->deleteDirectory(fakepathId);
+        if( !basedir.empty() )
+          fakepathId = w->descendPath(fakepath);
+      }
+    }
+
+    if( !basedir.empty() ) {
+      //Save starting time
+      time_t start = time(0);
+
+      if( hashCheck ) { //do a hash check, skip crawling!
+        LOG(logInfo) << "Checking hashes of files in directory \"" << basedir << '\"';
+        w->hashCheck(basedir, fakepathId);
+      } else { //normal crawling
+        LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
+        w->parseDirectory(basedir, fakepathId);
+      }
+
+      //Get time now, calculate and output duration
+      double duration = difftime(time(0),start);
+      unsigned int hours, minutes;
+      for(hours = 0; duration > 3600; hours++)
+        duration -= 3600;
+      for(minutes = 0; duration > 60; minutes++)
+        duration -= 60;
+      LOG(logInfo) << "Processed "
+                  << w->getStatistics().files << " files and "
+                  << w->getStatistics().directories << " directories in "
+                  << hours << "h"
+                  << minutes << "m"
+                  << duration << "s";
+
+      if( watch ) { //hashCheck && watch is already filtered out above
+        LOG(logInfo) << "Running watch on " << fakepath;
+        w->watch(basedir,fakepathId);
+      }
+    }
+  } catch( exception& e ) {
+    LOG(logError) << e.what();
+    exit(1);
   }
 
   delete w;
