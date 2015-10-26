@@ -10,7 +10,7 @@
 #include "logger.h"
 #include "hasher.h"
 
-#define VERSION "2.4"
+#define VERSION "2.5"
 
 using namespace std;
 
