@@ -3,6 +3,11 @@ CFLAGS=-c -g -O2 -Wall -Wextra -I /usr/include/mysql-connector/
 LDFLAGS=-lmysqlcppconn -lstdc++ -lrhash
 EXECUTABLE=fscrawl
 
+GIT_VERSION := $(shell git describe --abbrev=4 --dirty --always --tags 2>/dev/null)
+ifdef GIT_VERSION
+  CFLAGS += -DVERSION=\"$(GIT_VERSION)\"
+endif
+
 SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp
 OBJS = $(SRCS:%.cpp=%.o)
 

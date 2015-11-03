@@ -10,7 +10,9 @@
 #include "logger.h"
 #include "hasher.h"
 
-#define VERSION "2.5"
+#ifndef VERSION
+  #define VERSION "2.5"
+#endif
 
 using namespace std;
 
@@ -39,7 +41,7 @@ void usage() {
   LOG(logInfo) << "  -V, --verify\tVerify the tree structure - takes some time";
   LOG(logInfo) << "  --clear\tDelete the tree for this fakepath, others will be kept";
   LOG(logInfo) << "  --purge\tDelete all data from both tables completely";
-  LOG(logInfo) << "fscrawl" << VERSION;
+  LOG(logInfo) << "fscrawl version " << VERSION;
   exit(1);
 }
 
