@@ -1,7 +1,8 @@
-CC=g++
-CFLAGS=-c -g -O2 -Wall -Wextra -I /usr/include/mysql-connector/
-LDFLAGS=-lmysqlcppconn -lstdc++ -lrhash
-EXECUTABLE=fscrawl
+EXECUTABLE = fscrawl
+CFLAGS = -c -Wall -Wextra
+release: CFLAGS += -s -O2
+debug:   CFLAGS += -g -O0
+LDFLAGS = -lmysqlcppconn -lstdc++ -lrhash
 
 GIT_VERSION := $(shell git describe --abbrev=4 --dirty --always --tags 2>/dev/null)
 ifdef GIT_VERSION
@@ -11,18 +12,18 @@ endif
 SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp prepared_statement_wrapper.cpp
 OBJS = $(SRCS:%.cpp=%.o)
 
-.PHONY: all release clean
+.PHONY: all release debug clean
 
-all: fscrawl
+all: release
 
-release: $(OBJS)
-	$(CC) $(LDFLAGS) -s -o $(EXECUTABLE)-release $(OBJS)
+debug: $(EXECUTABLE)
+release: $(EXECUTABLE)
 
-fscrawl: $(OBJS)
-	$(CC) $(LDFLAGS) -g -o $(EXECUTABLE) $(OBJS)
+$(EXECUTABLE): $(OBJS)
+	$(CXX) $(LDFLAGS) -o $(EXECUTABLE) $(OBJS)
 
 %.o: %.cpp
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f $(OBJS) fscrawl fscrawl-release
+	rm -f $(OBJS) $(EXECUTABLE)
