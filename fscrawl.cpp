@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 
+#include <boost/program_options.hpp>
 #include <cppconn/driver.h>
 #include <cppconn/exception.h>
 #include <mysql_connection.h>
@@ -44,8 +45,54 @@ void usage() {
   LOG(logInfo) << "fscrawl version " << VERSION;
   exit(1);
 }
-
+namespace po = boost::program_options;
 int main(int argc, char* argv[]) {
+  // Declare the supported options.
+  po::options_description opts_mode("Operation modes");
+  opts_mode.add_options()
+    ("check", "Check the hash of every file (requires -T/M/S)")
+    ("verify", "Verify the tree structure - takes some time")
+    ("clear", "Delete the tree for this fakepath, others will be kept")
+    ("purge", "Delete all data from both tables completely")
+  ;
+  po::options_description opts_generic("Optional parameters");
+  opts_generic.add_options()
+    ("help", "Display this help and exit")
+    ("quiet", "Only display severe errors")
+    ("verbose", "Increase log level (info (default), detailed, debug)")
+    ("fakepath", po::value<string>(), "Instead of having BASEDIR as absolute root directory, parse all files as if they were unter this fakepath")
+    ("logfile", po::value<string>(), "Log to file instead of stderr")
+    ("watch", "Watch the given BASEDIR after crawling (program will block)")
+    ("database", po::value<string>()->default_value("fscrawl"), "Database to use (default: \"fscrawl\")")
+    ("host", po::value<string>()->default_value("localhost"), "Database host to connect to (default: \"localhost\")")
+    ("user", po::value<string>()->default_value("root"), "Specify database user (default: \"root\")")
+    ("password", po::value<string>(), "Specify database user password (default: none)")
+    ("sha1", "Calculate the SHA1 hash of every file")
+    ("md5", "Calculate the MD5 hash of every file")
+    ("tth", "Calculate the TTH hash of every file")
+    ("force-hashing", "Force recalculation of every hash (use when changing algorithm)")
+    ("file-table", po::value<string>()->default_value("fscrawl_files"), "Table to use for files (default: \"fscrawl_files\")")
+    ("dir-table", po::value<string>()->default_value("fscrawl_directories"), "Table to use for directories (default: \"fscrawl_directories\")")
+  ;
+
+  po::options_description opts_all("Allowed arguments");
+  opts_all.add(opts_mode).add(opts_generic);
+
+  po::variables_map vm;
+  po::store(po::parse_command_line(argc, argv, opts_all), vm);
+  po::notify(vm);
+
+  if (vm.count("help")) {
+      cout << opts_all << endl;
+      return 1;
+  }
+
+  if (vm.count("quiet"))
+    cout << "Quiet" << endl;
+  else
+    cout << "Verbosity level " << vm.count("verbose") << endl;
+  return 0;
+
   bool verifyTree = false;
   bool hashCheck = false;
   bool forceHashing = false;
