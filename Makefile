@@ -8,7 +8,7 @@ ifdef GIT_VERSION
   CFLAGS += -DVERSION=\"$(GIT_VERSION)\"
 endif
 
-SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp
+SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp prepared_statement_wrapper.cpp
 OBJS = $(SRCS:%.cpp=%.o)
 
 .PHONY: all release clean

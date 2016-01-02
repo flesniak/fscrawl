@@ -14,6 +14,9 @@
 #include <sys/inotify.h>
 #include <sys/stat.h>
 
+#include <cppconn/connection.h>
+#include <cppconn/statement.h>
+
 worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_directoryTable("fscrawl_directories"),
                                                 p_fileTable("fscrawl_files"),
@@ -308,43 +311,80 @@ void worker::initDatabase() {
                   "DEFAULT CHARACTER SET utf8 "
                   "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
 
-  LOG(logDebug) << "preparing statements";
-  if( p_prepQueryFileById != 0 ) delete p_prepQueryFileById;
-  if( p_prepQueryFileByName != 0 ) delete p_prepQueryFileByName;
-  if( p_prepQueryFilesByParent != 0 ) delete p_prepQueryFilesByParent;
-  if( p_prepInsertFile != 0 ) delete p_prepInsertFile;
-  if( p_prepUpdateFile != 0 ) delete p_prepUpdateFile;
-  if( p_prepDeleteFile != 0 ) delete p_prepDeleteFile;
-  if( p_prepDeleteFiles != 0 ) delete p_prepDeleteFiles;
-  if( p_prepQueryDirById != 0 ) delete p_prepQueryDirById;
-  if( p_prepQueryDirByName != 0 ) delete p_prepQueryDirByName;
-  if( p_prepQueryDirsByParent != 0 ) delete p_prepQueryDirsByParent;
-  if( p_prepInsertDir != 0 ) delete p_prepInsertDir;
-  if( p_prepUpdateDir != 0 ) delete p_prepUpdateDir;
-  if( p_prepDeleteDir != 0 ) delete p_prepDeleteDir;
-  if( p_prepLastInsertID != 0 ) delete p_prepLastInsertID;
-
-  //p_prepare heavily used mysql functions
-  p_prepQueryFileById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE id=?");
-  p_prepQueryFileByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=? AND name=?");
-  p_prepQueryFilesByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=?");
-  p_prepInsertFile = p_connection->prepareStatement("INSERT INTO "+p_fileTable+" (name,parent,size,date,hash) VALUES (?, ?, ?, FROM_UNIXTIME(?), ?)");
-  p_prepUpdateFile = p_connection->prepareStatement("UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?), hash=? WHERE id=?");
-  p_prepDeleteFile = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE id=?");
-  p_prepDeleteFiles = p_connection->prepareStatement("DELETE FROM "+p_fileTable+" WHERE parent=?");
-
-  p_prepQueryDirById = p_connection->prepareStatement("SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE id=?");
-  p_prepQueryDirByName = p_connection->prepareStatement("SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=? AND name=?");
-  p_prepQueryDirsByParent = p_connection->prepareStatement("SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=?");
-  p_prepInsertDir = p_connection->prepareStatement("INSERT INTO "+p_directoryTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
-  p_prepUpdateDir = p_connection->prepareStatement("UPDATE "+p_directoryTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
-  p_prepDeleteDir = p_connection->prepareStatement("DELETE FROM "+p_directoryTable+" WHERE id=?");
-
-  p_prepLastInsertID = p_connection->prepareStatement("SELECT LAST_INSERT_ID()");
+  prepareStatements();
 
   resetStatistics();
 
   p_databaseInitialized = true;
+}
+
+void worker::databaseReconnected() {
+  prepareStatements();
+}
+
+void worker::prepareStatements() {
+  LOG(logDebug) << "preparing statements";
+
+  if (p_prepQueryFileById)
+    p_prepQueryFileById->reprepare();
+  else
+    p_prepQueryFileById = PreparedStatementWrapper::create(this, "SELECT name,parent,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE id=?");
+  if( p_prepQueryFileByName)
+    p_prepQueryFileByName->reprepare();
+  else
+    p_prepQueryFileByName = PreparedStatementWrapper::create(this, "SELECT id,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=? AND name=?");
+  if( p_prepQueryFilesByParent)
+    p_prepQueryFilesByParent->reprepare();
+  else
+    p_prepQueryFilesByParent = PreparedStatementWrapper::create(this, "SELECT id,name,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=?");
+  if( p_prepInsertFile)
+    p_prepInsertFile->reprepare();
+  else
+    p_prepInsertFile = PreparedStatementWrapper::create(this, "INSERT INTO "+p_fileTable+" (name,parent,size,date,hash) VALUES (?, ?, ?, FROM_UNIXTIME(?), ?)");
+  if( p_prepUpdateFile)
+    p_prepUpdateFile->reprepare();
+  else
+    p_prepUpdateFile = PreparedStatementWrapper::create(this, "UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?), hash=? WHERE id=?");
+  if( p_prepDeleteFile)
+    p_prepDeleteFile->reprepare();
+  else
+    p_prepDeleteFile = PreparedStatementWrapper::create(this, "DELETE FROM "+p_fileTable+" WHERE id=?");
+  if( p_prepDeleteFiles)
+    p_prepDeleteFiles->reprepare();
+  else
+    p_prepDeleteFiles = PreparedStatementWrapper::create(this, "DELETE FROM "+p_fileTable+" WHERE parent=?");
+  if( p_prepQueryDirById)
+    p_prepQueryDirById->reprepare();
+  else
+    p_prepQueryDirById = PreparedStatementWrapper::create(this, "SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE id=?");
+  if (p_prepQueryParentOfDir)
+    p_prepQueryParentOfDir->reprepare();
+  else
+    p_prepQueryParentOfDir = PreparedStatementWrapper::create(this, "SELECT parent FROM "+p_directoryTable+" WHERE id=?");
+  if( p_prepQueryDirByName)
+    p_prepQueryDirByName->reprepare();
+  else
+    p_prepQueryDirByName = PreparedStatementWrapper::create(this, "SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=? AND name=?");
+  if( p_prepQueryDirsByParent)
+    p_prepQueryDirsByParent->reprepare();
+  else
+    p_prepQueryDirsByParent = PreparedStatementWrapper::create(this, "SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=?");
+  if( p_prepInsertDir)
+    p_prepInsertDir->reprepare();
+  else
+    p_prepInsertDir = PreparedStatementWrapper::create(this, "INSERT INTO "+p_directoryTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
+  if( p_prepUpdateDir)
+    p_prepUpdateDir->reprepare();
+  else
+    p_prepUpdateDir = PreparedStatementWrapper::create(this, "UPDATE "+p_directoryTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
+  if( p_prepDeleteDir)
+    p_prepDeleteDir->reprepare();
+  else
+    p_prepDeleteDir = PreparedStatementWrapper::create(this, "DELETE FROM "+p_directoryTable+" WHERE id=?");
+  if( p_prepLastInsertID)
+    p_prepLastInsertID->reprepare();
+  else
+    p_prepLastInsertID = PreparedStatementWrapper::create(this, "SELECT LAST_INSERT_ID()");
 }
 
 void worker::inheritProperties(entry_t* parent, const entry_t* entry) const {
@@ -644,6 +684,10 @@ void worker::setConnection(sql::Connection* dbConnection) {
   p_databaseInitialized = false;
 }
 
+sql::Connection* worker::getConnection() const {
+  return p_connection;
+}
+
 void worker::setForceHashing(bool force) {
   p_forceHashing = force;
 }
@@ -720,7 +764,6 @@ void worker::verifyTree() {
 
   list<uint32_t>* idCache = new list<uint32_t>; //contains valid ids that have a connection to parent 0
   list<uint32_t>::iterator cacheIterator;
-  sql::PreparedStatement *prepGetDirParent = p_connection->prepareStatement("SELECT parent FROM "+p_directoryTable+" WHERE id=?");
 
   LOG(logDetailed) << "Verifying directories";
   sql::ResultSet* res = p_stmt->executeQuery("SELECT id,parent FROM "+p_directoryTable);
@@ -745,8 +788,8 @@ void worker::verifyTree() {
     //now we check if we can find the given parent of id
     while( tempParentId != 0 && find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
       LOG(logDebug) << "Ancestor: id " << tempId << " parent " << tempParentId;
-      prepGetDirParent->setUInt(1,tempParentId);
-      sql::ResultSet *parentQueryResult = prepGetDirParent->executeQuery();
+      p_prepQueryParentOfDir->setUInt(1,tempParentId);
+      sql::ResultSet *parentQueryResult = p_prepQueryParentOfDir->executeQuery();
       if( parentQueryResult->next() ) {
         LOG(logDebug) << "found ancestor id " << tempParentId << " of id " << id << " in database, continueing trace";
         tempId = tempParentId;
@@ -771,7 +814,6 @@ void worker::verifyTree() {
       idCache->merge(tempIdCache); //cache all temporary ids as the trace is okay
   }
   delete res;
-  delete prepGetDirParent;
 
   LOG(logDetailed) << "Verifying files";
   res = p_stmt->executeQuery("SELECT id,parent FROM "+p_fileTable);

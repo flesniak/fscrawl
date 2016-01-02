@@ -1,12 +1,14 @@
 #ifndef WORKER_H
 #define WORKER_H
 
+#include <stdint.h>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <cppconn/driver.h>
-#include <cppconn/prepared_statement.h>
+
+#include "prepared_statement_wrapper.h"
 
 using namespace std;
 
@@ -40,6 +42,7 @@ public:
   };
 
   void setConnection(sql::Connection* dbConnection);
+  sql::Connection* getConnection() const;
   void setInheritance(bool inheritSize, bool inheritMTime);
   void setTables(const string& directoryTable, const string& fileTable);
   void setHasher(Hasher* hasher);
@@ -69,6 +72,8 @@ public:
   //Check the hash of all files under directory "parent", prepending "path" to the files relative path from the database
   //Only files existing in the database will be crawled, the filesystem path is built from database information.
   void hashCheck(const string& path, uint32_t parent = 0);
+  //Called by PreparedStatementWrapper if the connection has been reconnected and thus all prepared statements have to be re-prepared
+  void databaseReconnected();
 
 private:
   void cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache);
@@ -79,6 +84,7 @@ private:
   entry_t getFileById(uint32_t id); //returns an empty entry_t.name on failure
   entry_t getFileByName(const string& name, uint32_t parent); //returns entry_t.id = 0 on failure
   void initDatabase();
+  void prepareStatements();
   void inheritProperties(entry_t* parent, const entry_t* entry) const;
   uint32_t insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime);
   uint32_t insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime, const string& hash);
@@ -110,20 +116,21 @@ private:
   Hasher* p_hasher;
 
   sql::Connection* p_connection;
-  sql::PreparedStatement* p_prepQueryFileById;
-  sql::PreparedStatement* p_prepQueryFileByName;
-  sql::PreparedStatement* p_prepQueryFilesByParent;
-  sql::PreparedStatement* p_prepInsertFile;
-  sql::PreparedStatement* p_prepUpdateFile;
-  sql::PreparedStatement* p_prepDeleteFile;
-  sql::PreparedStatement* p_prepDeleteFiles;
-  sql::PreparedStatement* p_prepQueryDirById;
-  sql::PreparedStatement* p_prepQueryDirByName;
-  sql::PreparedStatement* p_prepQueryDirsByParent;
-  sql::PreparedStatement* p_prepInsertDir;
-  sql::PreparedStatement* p_prepUpdateDir;
-  sql::PreparedStatement* p_prepDeleteDir;
-  sql::PreparedStatement* p_prepLastInsertID;
+  PreparedStatementWrapper* p_prepQueryFileById;
+  PreparedStatementWrapper* p_prepQueryFileByName;
+  PreparedStatementWrapper* p_prepQueryFilesByParent;
+  PreparedStatementWrapper* p_prepInsertFile;
+  PreparedStatementWrapper* p_prepUpdateFile;
+  PreparedStatementWrapper* p_prepDeleteFile;
+  PreparedStatementWrapper* p_prepDeleteFiles;
+  PreparedStatementWrapper* p_prepQueryDirById;
+  PreparedStatementWrapper* p_prepQueryDirByName;
+  PreparedStatementWrapper* p_prepQueryDirsByParent;
+  PreparedStatementWrapper* p_prepQueryParentOfDir;
+  PreparedStatementWrapper* p_prepInsertDir;
+  PreparedStatementWrapper* p_prepUpdateDir;
+  PreparedStatementWrapper* p_prepDeleteDir;
+  PreparedStatementWrapper* p_prepLastInsertID;
   sql::Statement* p_stmt;
 };
 

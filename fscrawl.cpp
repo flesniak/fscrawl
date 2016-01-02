@@ -257,7 +257,8 @@ int main(int argc, char* argv[]) {
     options["userName"] = mysql_user;
     options["password"] = mysql_password;
     options["schema"] = mysql_database;
-    options["OPT_RECONNECT"] = true;
+    //we handle reconnecting on our own to ensure that prepared statements are re-prepared after lossing connection
+    //options["OPT_RECONNECT"] = true;
     con = driver->connect(options);
   } catch( exception& e ) {
     LOG(logError) << "Failed to connect: " << e.what();
