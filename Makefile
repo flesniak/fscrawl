@@ -1,5 +1,5 @@
 EXECUTABLE = fscrawl
-CFLAGS = -c -Wall -Wextra -std=c++11
+CFLAGS = -Wall -Wextra -std=c++11
 release: CFLAGS += -s -O2
 debug:   CFLAGS += -g -O0
 LDFLAGS = -lmysqlcppconn -lstdc++ -lrhash -lboost_program_options
@@ -20,10 +20,10 @@ debug: $(EXECUTABLE)
 release: $(EXECUTABLE)
 
 $(EXECUTABLE): $(OBJS)
-	$(CXX) $(LDFLAGS) -o $(EXECUTABLE) $(OBJS)
+	$(CXX) $(LDFLAGS) $(CFLAGS) -o $(EXECUTABLE) $(OBJS)
 
 %.o: %.cpp
-	$(CXX) $(CFLAGS) -o $@ $<
+	$(CXX) $(CFLAGS) -c -o $@ $<
 
 clean:
 	rm -f $(OBJS) $(EXECUTABLE)
