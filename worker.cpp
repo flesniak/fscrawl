@@ -714,14 +714,14 @@ void worker::setupWatches(const string& path, uint32_t id) {
   sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
   vector< pair<uint32_t, string> > cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
   while( res->next() )
-    cache.push_back( make_pair<uint32_t, string>(res->getUInt(1), res->getString(2)) );
+    cache.push_back( make_pair(res->getUInt(1), res->getString(2)) );
   delete res;
   for( vector< pair<uint32_t, string> >::iterator it = cache.begin(); it != cache.end(); it++ )
     setupWatches(path+'/'+it->second, it->first);
   LOG(logDetailed) << "Setting up watch for \"" << path << "\" (id " << id << ')';
   int dirWatchDescriptor = inotify_add_watch( p_watchDescriptor, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR ); // IN_MOVE_SELF
   if( dirWatchDescriptor != 0 )
-    p_watches[dirWatchDescriptor] = make_pair<uint32_t,string>(id,path);
+    p_watches[dirWatchDescriptor] = make_pair(id,path);
   else
     LOG(logError) << "Unable to setup watch for id " << id << " with path \"" << path << '\"';
 }
