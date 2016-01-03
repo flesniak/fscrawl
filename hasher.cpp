@@ -49,3 +49,13 @@ Hasher::hashStatus_t Hasher::hash(const string& filename, string& hash) {
   LOG(logDetailed) << "Calculated " << rhash_get_name(rhashType) << " hash of file " << filename << ": " << hash;
   return hashSuccess;
 }
+
+string Hasher::hashTypeToString(hashType_t type) {
+  switch (type) {
+    case Hasher::noHash : return "none";
+    case Hasher::md5 : return "md5";
+    case Hasher::sha1 : return "sha1";
+    case Hasher::tth : return "tth";
+    default : return "invalid";
+  }
+}

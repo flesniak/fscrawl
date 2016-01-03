@@ -16,6 +16,8 @@ public:
 
   hashStatus_t hash(const string& filename, string& hash);
 
+  static string hashTypeToString(hashType_t type);
+
 private:
   hashType_t p_hashType;
 };
