@@ -10,7 +10,7 @@
 #include <sstream>
 #include <string>
 
-enum logLevel_t { logError, logWarning, logInfo, logDetailed, logDebug };
+enum logLevel_t { logError = 0, logWarning, logInfo, logDetailed, logDebug };
 
 class LoggerFacility;
 

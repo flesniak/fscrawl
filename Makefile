@@ -1,5 +1,5 @@
 EXECUTABLE = fscrawl
-CFLAGS = -c -Wall -Wextra
+CFLAGS = -c -Wall -Wextra -std=c++11
 release: CFLAGS += -s -O2
 debug:   CFLAGS += -g -O0
 LDFLAGS = -lmysqlcppconn -lstdc++ -lrhash -lboost_program_options
@@ -9,7 +9,7 @@ ifdef GIT_VERSION
   CFLAGS += -DVERSION=\"$(GIT_VERSION)\"
 endif
 
-SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp prepared_statement_wrapper.cpp
+SRCS = fscrawl.cpp logger.cpp worker.cpp hasher.cpp prepared_statement_wrapper.cpp options.cpp
 OBJS = $(SRCS:%.cpp=%.o)
 
 .PHONY: all release debug clean
