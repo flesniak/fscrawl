@@ -1,6 +1,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <csignal>
 
 #include <cppconn/driver.h>
 #include <cppconn/exception.h>
@@ -13,12 +14,40 @@
 
 using namespace std;
 
+static worker* w = 0;
+static sql::Connection* con = 0;
+
 void initFakepath(worker* w, uint32_t& fakepathId, const string& fakepath) {
   if( !fakepath.empty() ) {
     LOG(logInfo) << "Using fakepath \"" << fakepath << '\"';
     fakepathId = w->descendPath(fakepath);
     LOG(logDebug) << "got fakepathId " << fakepathId;
   }
+}
+
+void cleanup() {
+  if (w)
+    delete w;
+  if (con) {
+    con->close();
+    delete con;
+  }
+}
+
+void signalHandler(int signum) {
+  static int interruptsReceived = 0;
+  switch (interruptsReceived) {
+    case 0 :
+      LOG(logDebug) << "Signal " << signum << " received. Sending abort to worker.";
+      w->abort();
+      break;
+    default :
+      LOG(logWarning) << "Second interrupt received, terminating";
+      cleanup();
+      exit(1);
+      break;
+  }
+  interruptsReceived++;
 }
 
 int main(int argc, char* argv[]) {
@@ -30,11 +59,8 @@ int main(int argc, char* argv[]) {
   string basedir = OPT_STR("basedir");
   string fakepath = OPT_STR("fakepath");
 
-  sql::Driver *driver = 0;
-  sql::Connection *con = 0;
   try {
     LOG(logInfo) << "Connecting to SQL server";
-    driver = get_driver_instance();
     sql::ConnectOptionsMap options;
     //options["hostName"] = OPTS["host"].as<string>;
     options["hostName"] = OPT_STR("host");
@@ -44,15 +70,18 @@ int main(int argc, char* argv[]) {
     //we handle reconnecting on our own to ensure that prepared statements are re-prepared after lossing connection
     //however this option is useful for debugging if an unprotected operation such as statement prepare is executed
     options["OPT_RECONNECT"] = true;
-    con = driver->connect(options);
+    con = get_driver_instance()->connect(options);
   } catch( exception& e ) {
     LOG(logError) << "Failed to connect: " << e.what();
     exit(1);
   }
 
   LOG(logDebug) << "setting up worker";
-  worker* w = new worker(con);
+  w = new worker(con);
   w->setTables(OPT_STR("dir-table"),OPT_STR("file-table"));
+
+  signal(SIGINT, signalHandler);
+  signal(SIGTERM, signalHandler);
 
   Hasher::hashType_t hashType = OPTS.hashType();
   if (hashType != Hasher::noHash)
@@ -111,6 +140,7 @@ int main(int argc, char* argv[]) {
     if (OPTS.getOperation() == options::opCrawl && OPTS.watch()) {
       LOG(logInfo) << "Entering watch mode on " << basedir;
       w->watch(basedir, fakepathId);
+      LOG(logInfo) << "Finished watching";
     }
   } catch( sql::SQLException& e ) {
     LOG(logError) << "SQL Exception: " << e.what();
@@ -120,9 +150,7 @@ int main(int argc, char* argv[]) {
     exit(1);
   }
 
-  delete w;
-  con->close();
-  delete con;
+  cleanup();
 
   return 0;
 }

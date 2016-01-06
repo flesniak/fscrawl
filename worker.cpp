@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
+#include <poll.h>
 
 #include <cppconn/connection.h>
 #include <cppconn/statement.h>
@@ -24,6 +25,7 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_inheritSize(true),
                                                 p_watchDescriptor(0),
                                                 p_forceHashing(0),
+                                                p_run(true),
                                                 p_hasher(0),
                                                 p_connection(dbConnection),
                                                 p_prepQueryFileById(0),
@@ -45,6 +47,10 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
 }
 
 worker::~worker() {
+}
+
+void worker::abort() {
+  p_run = false;
 }
 
 string worker::ascendPath(uint32_t id, uint32_t downToId, entry_t::type_t type) {
@@ -287,6 +293,8 @@ void worker::hashCheck(const string& path, uint32_t parent) {
       hashCheck(subpath, (*it)->id);
       p_statistics.directories++;
     }
+    if (!p_run) //break loop on global abort condition
+      break;
   }
 }
 
@@ -481,7 +489,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   LOG(logDebug) << "fetching directory entries from db for caching";
   cacheDirectoryEntriesFromDB(ownEntry->id, entryCache);
 
-  while( ( dirEntry = readdir(dir) ) ) { //readdir returns NULL when "end" of directory is reached
+  while( p_run && ( dirEntry = readdir(dir) ) ) { //readdir returns NULL when "end" of directory is reached
     if( strcmp(dirEntry->d_name,".") == 0 || strcmp(dirEntry->d_name,"..") == 0 ) //don't process . and .. for obvious reasons
       continue;
     string dirEntryPath = path + '/' + dirEntry->d_name;
@@ -564,6 +572,8 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) { //only directories left
     parseDirectory(path + '/' + (*it)->name, *it);
     inheritProperties(ownEntry, *it); //copies size and mtime info (size to subSize for later comparison)
+    if (!p_run) //break loop on global abort condition
+      break;
   }
   processChangedEntries(entryCache, ownEntry);
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) //we do not need any file entry_t anymore, just keep directories
@@ -732,7 +742,7 @@ void worker::setupWatches(const string& path, uint32_t id) {
   for( vector< pair<uint32_t, string> >::iterator it = cache.begin(); it != cache.end(); it++ )
     setupWatches(path+'/'+it->second, it->first);
   LOG(logDetailed) << "Setting up watch for \"" << path << "\" (id " << id << ')';
-  int dirWatchDescriptor = inotify_add_watch( p_watchDescriptor, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR ); // IN_MOVE_SELF
+  int dirWatchDescriptor = inotify_add_watch( p_watchDescriptor, path.c_str(), IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR);
   if( dirWatchDescriptor != 0 )
     p_watches[dirWatchDescriptor] = make_pair(id,path);
   else
@@ -780,7 +790,7 @@ void worker::verifyTree() {
 
   LOG(logDetailed) << "Verifying directories";
   sql::ResultSet* res = p_stmt->executeQuery("SELECT id,parent FROM "+p_directoryTable);
-  while( res->next() ) { //loop through all directories
+  while( p_run && res->next() ) { //loop through all directories
     uint32_t id = res->getUInt(1);
     uint32_t parent = res->getUInt(2);
     uint32_t tempId = id; //id-parent pairs used to trace up until they are either found in idCache or tempParentId gets zero
@@ -799,7 +809,7 @@ void worker::verifyTree() {
     }
     tempIdCache.push_back(id); //pre-cache id in case it may be valid
     //now we check if we can find the given parent of id
-    while( tempParentId != 0 && find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
+    while( p_run && tempParentId != 0 && find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
       LOG(logDebug) << "Ancestor: id " << tempId << " parent " << tempParentId;
       p_prepQueryParentOfDir->setUInt(1,tempParentId);
       sql::ResultSet *parentQueryResult = p_prepQueryParentOfDir->executeQuery();
@@ -830,7 +840,7 @@ void worker::verifyTree() {
 
   LOG(logDetailed) << "Verifying files";
   res = p_stmt->executeQuery("SELECT id,parent FROM "+p_fileTable);
-  while( res->next() ) {
+  while( p_run && res->next() ) {
     uint32_t id = res->getUInt(1);
     uint32_t parent = res->getUInt(2);
     if( parent == 0 || find(idCache->begin(), idCache->end(), parent) == idCache->end() ) {
@@ -855,10 +865,14 @@ void worker::watch(const string& path, uint32_t id) {
   setupWatches(path,id);
 
   LOG(logInfo) << "Setup complete, waiting for events...";
-  bool run = true; //convenience run-while-true variable
   const int eventSize = sizeof(struct inotify_event) + NAME_MAX + 1;
 
-  while( run ) {
+  struct pollfd fds = { .fd = p_watchDescriptor, .events = POLLIN, .revents = 0 };
+
+  while( p_run ) {
+    poll(&fds, 1, 1000); //poll for new events every second
+    if (!(fds.revents & POLLIN))
+      continue;
     char* buffer = new char[eventSize];
     int len = read(p_watchDescriptor, buffer, eventSize);
     int offset = 0;
@@ -898,8 +912,9 @@ void worker::watch(const string& path, uint32_t id) {
           const string path = p.second + '/' + event->name;
           entry_t e = readPath( path );
           if( e.state == entry_t::entryOk ) { //readPath successful
-            hashFile(&e, path); //hash new file if enabled
-            insertFile(p.first, event->name, e.size, e.mtime, e.hash);
+            //insert a blank hash because the file may not be written out completely
+            //hashing will be done by IN_CLOSE_WRITE when the file is closed after writing
+            insertFile(p.first, event->name, e.size, e.mtime, string());
             updateTreeProperties(p.first, e.size, e.mtime);
           } else
             LOG(logError) << "failed to read path \"" << path << '\"';
@@ -918,7 +933,7 @@ void worker::watch(const string& path, uint32_t id) {
             LOG(logError) << "failed to read path \"" << path << '\"';
           break;
         }
-        case IN_CLOSE_WRITE : {
+        case IN_CLOSE_WRITE : { //covers newly created files as well as modified existing files
           LOG(logDebug) << "got inotify event IN_CLOSE_WRITE for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
           const pair<uint32_t,string> p = p_watches[event->wd];
           const string path = p.second + '/' + event->name;
@@ -930,6 +945,7 @@ void worker::watch(const string& path, uint32_t id) {
           entry_t dbEntry = getFileByName(event->name, p.first);
           hashFile(&dbEntry, path); //in any case, hash modified (or inexistent) file if enabled
           if( dbEntry.id == 0 ) {
+            //new files should have been created by IN_CREATE, now we should only need to update size/mtime/hash
             LOG(logWarning) << "Modified file " << event->name << " was not yet in database, fixing.";
             insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime, dbEntry.hash); 
             updateTreeProperties(p.first, fsEntry.size, fsEntry.mtime);
@@ -943,31 +959,6 @@ void worker::watch(const string& path, uint32_t id) {
         case IN_CLOSE_WRITE | IN_ISDIR : {
           LOG(logDebug) << "got inotify event IN_CLOSE_WRITE for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
           break; //won't happen, mtime changes are covered by IN_ATTRIB
-        }
-        case IN_MOVED_FROM : {
-          LOG(logDebug) << "got inotify event IN_MOVED_FROM for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
-          const pair<uint32_t,string> p = p_watches[event->wd];
-          entry_t e = getFileByName(event->name, p.first);
-          if( e.id != 0 ) {
-            LOG(logInfo) << "Removing file " << event->name;
-            deleteFile(e.id);
-            updateTreeProperties(p.first, (int64_t)-1*e.size, 0);
-          } else
-            LOG(logError) << "Failed to get file \"" << path << "\" from db for removal, already deleted.";
-          break;
-        }
-        case IN_MOVED_FROM | IN_ISDIR : {
-          LOG(logDebug) << "got inotify event IN_MOVED_FROM for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
-          const pair<uint32_t,string> p = p_watches[event->wd];
-          entry_t e = getDirectoryByName(event->name, p.first);
-          if( e.id != 0 ) {
-            removeWatches(e.id);
-            LOG(logInfo) << "Removing directory " << event->name;
-            deleteDirectory(e.id);
-            updateTreeProperties(p.first, (int64_t)-1*e.size, 0);
-          } else
-            LOG(logError) << "Failed to get directory \"" << event->name << "\" from db for removal, already deleted.";
-          break;
         }
         case IN_MOVED_TO : {
           LOG(logDebug) << "got inotify event IN_MOVED_TO for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
@@ -997,8 +988,9 @@ void worker::watch(const string& path, uint32_t id) {
             LOG(logError) << "failed to read path \"" << path << '\"';
           break;
         }
+        case IN_MOVED_FROM :
         case IN_DELETE : {
-          LOG(logDebug) << "got inotify event IN_DELETE for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          LOG(logDebug) << "got inotify event IN_DELETE/IN_MOVED_FROM for file \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
           const pair<uint32_t,string> p = p_watches[event->wd];
           entry_t e = getFileByName(event->name, p.first);
           if( e.id != 0 ) {
@@ -1009,8 +1001,9 @@ void worker::watch(const string& path, uint32_t id) {
             LOG(logError) << "Failed to get file \"" << event->name << "\" from db for removal, already deleted.";
           break;
         }
+        case IN_MOVED_FROM | IN_ISDIR :
         case IN_DELETE | IN_ISDIR : {
-          LOG(logDebug) << "got inotify event IN_DELETE for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
+          LOG(logDebug) << "got inotify event IN_DELETE/IN_MOVED_FROM for dir \"" << event->name << "\" cookie " << event->cookie << " wd " << event->wd << " dir " << p_watches[event->wd].first;
           const pair<uint32_t,string> p = p_watches[event->wd];
           entry_t e = getDirectoryByName(event->name, p.first);
           if( e.id != 0 ) {

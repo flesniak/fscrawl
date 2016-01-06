@@ -74,6 +74,8 @@ public:
   void hashCheck(const string& path, uint32_t parent = 0);
   //Called by PreparedStatementWrapper if the connection has been reconnected and thus all prepared statements have to be re-prepared
   void databaseReconnected();
+  //Sets internal conditions to abort crawling, hashing or watching
+  void abort();
 
 private:
   void cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache);
@@ -112,6 +114,7 @@ private:
   int p_watchDescriptor;
   map< int, pair<uint32_t,string> > p_watches; //stores inotify watch descriptors and their corresponding ids and paths
   bool p_forceHashing;
+  bool p_run;
 
   Hasher* p_hasher;
 
