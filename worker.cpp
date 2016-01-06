@@ -36,6 +36,7 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_prepQueryDirById(0),
                                                 p_prepQueryDirByName(0),
                                                 p_prepQueryDirsByParent(0),
+                                                p_prepQueryParentOfDir(0),
                                                 p_prepInsertDir(0),
                                                 p_prepUpdateDir(0),
                                                 p_prepDeleteDir(0),
@@ -56,7 +57,7 @@ string worker::ascendPath(uint32_t id, uint32_t downToId, entry_t::type_t type) 
     else
       e = getDirectoryById(id);
     if( e.name.empty() )
-      throw("unable to ascend path, unexistent entry");
+      throw("unable to ascend path, inexistent entry");
     else
       return ascendPath(e.parent,downToId,entry_t::directory)+'/'+e.name;
   } else
@@ -160,7 +161,7 @@ uint32_t worker::descendPath(string path, entry_t::type_t type, bool createDirec
           if( createDirectory )
             subEntry.id = insertDirectory(pathId,pathElement,0,time(0));
           else
-            throw("unable to descend path, unexistent directory");
+            throw("unable to descend path, inexistent directory");
         } else {
           subEntry = getFileByName(pathElement,pathId);
         }
@@ -329,58 +330,72 @@ void worker::prepareStatements() {
     p_prepQueryFileById->reprepare();
   else
     p_prepQueryFileById = PreparedStatementWrapper::create(this, "SELECT name,parent,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE id=?");
+
   if( p_prepQueryFileByName)
     p_prepQueryFileByName->reprepare();
   else
     p_prepQueryFileByName = PreparedStatementWrapper::create(this, "SELECT id,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=? AND name=?");
+
   if( p_prepQueryFilesByParent)
     p_prepQueryFilesByParent->reprepare();
   else
     p_prepQueryFilesByParent = PreparedStatementWrapper::create(this, "SELECT id,name,size,UNIX_TIMESTAMP(date),hash FROM "+p_fileTable+" WHERE parent=?");
+
   if( p_prepInsertFile)
     p_prepInsertFile->reprepare();
   else
     p_prepInsertFile = PreparedStatementWrapper::create(this, "INSERT INTO "+p_fileTable+" (name,parent,size,date,hash) VALUES (?, ?, ?, FROM_UNIXTIME(?), ?)");
+
   if( p_prepUpdateFile)
     p_prepUpdateFile->reprepare();
   else
     p_prepUpdateFile = PreparedStatementWrapper::create(this, "UPDATE "+p_fileTable+" SET size=?, date=FROM_UNIXTIME(?), hash=? WHERE id=?");
+
   if( p_prepDeleteFile)
     p_prepDeleteFile->reprepare();
   else
     p_prepDeleteFile = PreparedStatementWrapper::create(this, "DELETE FROM "+p_fileTable+" WHERE id=?");
+
   if( p_prepDeleteFiles)
     p_prepDeleteFiles->reprepare();
   else
     p_prepDeleteFiles = PreparedStatementWrapper::create(this, "DELETE FROM "+p_fileTable+" WHERE parent=?");
+
   if( p_prepQueryDirById)
     p_prepQueryDirById->reprepare();
   else
     p_prepQueryDirById = PreparedStatementWrapper::create(this, "SELECT name,parent,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE id=?");
-  if (p_prepQueryParentOfDir)
-    p_prepQueryParentOfDir->reprepare();
-  else
-    p_prepQueryParentOfDir = PreparedStatementWrapper::create(this, "SELECT parent FROM "+p_directoryTable+" WHERE id=?");
+
   if( p_prepQueryDirByName)
     p_prepQueryDirByName->reprepare();
   else
     p_prepQueryDirByName = PreparedStatementWrapper::create(this, "SELECT id,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=? AND name=?");
+
   if( p_prepQueryDirsByParent)
     p_prepQueryDirsByParent->reprepare();
   else
     p_prepQueryDirsByParent = PreparedStatementWrapper::create(this, "SELECT id,name,size,UNIX_TIMESTAMP(date) FROM "+p_directoryTable+" WHERE parent=?");
+
+  if (p_prepQueryParentOfDir)
+    p_prepQueryParentOfDir->reprepare();
+  else
+    p_prepQueryParentOfDir = PreparedStatementWrapper::create(this, "SELECT parent FROM "+p_directoryTable+" WHERE id=?");
+
   if( p_prepInsertDir)
     p_prepInsertDir->reprepare();
   else
     p_prepInsertDir = PreparedStatementWrapper::create(this, "INSERT INTO "+p_directoryTable+" (name,parent,size,date) VALUES (?, ?, ?, FROM_UNIXTIME(?))");
+
   if( p_prepUpdateDir)
     p_prepUpdateDir->reprepare();
   else
     p_prepUpdateDir = PreparedStatementWrapper::create(this, "UPDATE "+p_directoryTable+" SET size=?, date=FROM_UNIXTIME(?) WHERE id=?");
+
   if( p_prepDeleteDir)
     p_prepDeleteDir->reprepare();
   else
     p_prepDeleteDir = PreparedStatementWrapper::create(this, "DELETE FROM "+p_directoryTable+" WHERE id=?");
+
   if( p_prepLastInsertID)
     p_prepLastInsertID->reprepare();
   else
@@ -472,7 +487,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
     string dirEntryPath = path + '/' + dirEntry->d_name;
     LOG(logDebug) << "processing dirEntry " << dirEntryPath;
     if( stat64(dirEntryPath.c_str(), &dirEntryStat) ) {
-      LOG(logError) << "stat() on " << dirEntryPath << " failed: " << errnoString() << endl;
+      LOG(logError) << "stat() on " << dirEntryPath << " failed: " << errnoString();
       continue;
     }
 
@@ -505,9 +520,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
       } else {
         entry->subSize = 0;
         entry->type = entry_t::file;
-        if( p_hasher ) {
-          hashFile(entry, dirEntryPath); //hash new files if enabled
-        }
+        hashFile(entry, dirEntryPath); //hash new files if enabled
       }
       entryCache.push_back(entry);
     } else { //entry is in db, check for changes
@@ -642,7 +655,7 @@ worker::entry_t worker::readPath(const string& path) {
   entry_t entry = { .id = 0, .mtime = 0, .name = string(), .parent = 0, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::any, .hash = string() };
 
   if( stat64(path.c_str(), &entryStat) ) {
-    LOG(logError) << "stat64() on " << path << " failed: " << errnoString() << endl;
+    LOG(logError) << "stat64() on " << path << " failed: " << errnoString();
     return entry;
   }
 
@@ -830,8 +843,7 @@ void worker::verifyTree() {
   delete idCache;
 }
 
-//TODO implement hashing during watch
-//TODO implement connection checking / keep alive
+//TODO signal handler to clean up on ctrl+c/SIGTERM
 void worker::watch(const string& path, uint32_t id) {
   if( !p_databaseInitialized )
     initDatabase();
@@ -886,6 +898,7 @@ void worker::watch(const string& path, uint32_t id) {
           const string path = p.second + '/' + event->name;
           entry_t e = readPath( path );
           if( e.state == entry_t::entryOk ) { //readPath successful
+            hashFile(&e, path); //hash new file if enabled
             insertFile(p.first, event->name, e.size, e.mtime, e.hash);
             updateTreeProperties(p.first, e.size, e.mtime);
           } else
@@ -915,13 +928,14 @@ void worker::watch(const string& path, uint32_t id) {
             break;
           }
           entry_t dbEntry = getFileByName(event->name, p.first);
+          hashFile(&dbEntry, path); //in any case, hash modified (or inexistent) file if enabled
           if( dbEntry.id == 0 ) {
             LOG(logWarning) << "Modified file " << event->name << " was not yet in database, fixing.";
-            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime, string()); //TODO hashing
+            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime, dbEntry.hash); 
             updateTreeProperties(p.first, fsEntry.size, fsEntry.mtime);
           } else {
             LOG(logInfo) << "Updating file " << event->name;
-            updateFile(dbEntry.id, fsEntry.size, fsEntry.mtime, string()); //TODO hashing
+            updateFile(dbEntry.id, fsEntry.size, fsEntry.mtime, dbEntry.hash);
             updateTreeProperties(p.first, fsEntry.size - dbEntry.size, fsEntry.mtime);
           }
           break;
@@ -961,7 +975,8 @@ void worker::watch(const string& path, uint32_t id) {
           const string path = p.second + '/' + event->name;
           entry_t e = readPath( path );
           if( e.state == entry_t::entryOk ) { //readPath successful
-            insertFile(p.first, event->name, e.size, e.mtime, string()); //TODO hashing
+            hashFile(&e, path);
+            insertFile(p.first, event->name, e.size, e.mtime, e.hash);
             updateTreeProperties(p.first, e.size, e.mtime);
           } else
             LOG(logError) << "failed to read path \"" << path << '\"';

@@ -26,8 +26,6 @@ int main(int argc, char* argv[]) {
     case 1 : return 0; // immediate quit (help, version)
     case 2 : return 1; // parse error
   }
-  cout << "basedir: " << OPTS.basedir() << endl;
-  return 0;
 
   string basedir = OPT_STR("basedir");
   string fakepath = OPT_STR("fakepath");
@@ -44,7 +42,8 @@ int main(int argc, char* argv[]) {
     options["password"] = OPT_STR("password");
     options["schema"]   = OPT_STR("database");
     //we handle reconnecting on our own to ensure that prepared statements are re-prepared after lossing connection
-    //options["OPT_RECONNECT"] = true;
+    //however this option is useful for debugging if an unprotected operation such as statement prepare is executed
+    options["OPT_RECONNECT"] = true;
     con = driver->connect(options);
   } catch( exception& e ) {
     LOG(logError) << "Failed to connect: " << e.what();

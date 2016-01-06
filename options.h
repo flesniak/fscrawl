@@ -2,6 +2,7 @@
 #define OPTIONS_H
 
 #include <boost/program_options.hpp>
+#include <string>
 
 #include "hasher.h"
 

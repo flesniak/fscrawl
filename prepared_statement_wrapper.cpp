@@ -13,7 +13,8 @@ PreparedStatementWrapper::PreparedStatementWrapper()
 {}
 
 PreparedStatementWrapper::~PreparedStatementWrapper() {
-  delete p_stmt;
+  if (p_stmt)
+    delete p_stmt;
 }
 
 PreparedStatementWrapper* PreparedStatementWrapper::create(worker* w, const sql::SQLString& sql) {
@@ -33,7 +34,8 @@ void PreparedStatementWrapper::testConnection() {
 }
 
 void PreparedStatementWrapper::reprepare() {
-  delete p_stmt;
+  if (p_stmt)
+    delete p_stmt;
   p_stmt = p_worker->getConnection()->prepareStatement(p_string);
 }
 
