@@ -1,5 +1,5 @@
 pkgname=fscrawl-git
-pkgver=r48.c3bb71b
+pkgver=nover
 pkgrel=1
 pkgdesc="A tool to create a tree-structure representing the local filesystem in a mysql database"
 url="http://github.com/flesniak/fscrawl"
@@ -21,7 +21,7 @@ pkgver() {
 
 build() {
   cd ${pkgname}
-  make
+  make -j4
 }
 
 package() {
