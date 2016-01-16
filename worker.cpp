@@ -589,6 +589,8 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
 }
 
 void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry) {
+  if (!p_run) //exit and do not process entries which may be unprocessed
+    return;
   vector<entry_t*>::iterator it = entries.begin();
   while( it != entries.end() ) {
 
