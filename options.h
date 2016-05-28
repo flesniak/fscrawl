@@ -24,7 +24,7 @@ public:
   const string& basedir() const { return p_basedir; };
   Hasher::hashType_t hashType() const { return p_hashType; };
 
-  enum operation_t { opNone, opCrawl, opCheck, opVerify, opClear, opPurge };
+  enum operation_t { opNone, opCrawl, opCheck, opVerify, opPrint, opClear, opPurge };
   operation_t getOperation() const { return p_operation; };
 private:
   options();

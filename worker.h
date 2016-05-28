@@ -67,6 +67,8 @@ public:
   void parseDirectory(const string& path, uint32_t id = 0);
   //Verify the tree consistency. Resource hungry!
   void verifyTree();
+  //Prints all files and directories in the tree below parent
+  void printTree(uint32_t parent = 0, const string& path = "");
   //Watches the directory id including subdirectories
   void watch(const string& path, uint32_t id = 0);
   //Check the hash of all files under directory "parent", prepending "path" to the files relative path from the database

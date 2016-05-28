@@ -109,6 +109,12 @@ int main(int argc, char* argv[]) {
         w->verifyTree();
         LOG(logInfo) << "Tree verified";
         break;
+      case options::opPrint :
+        initFakepath(w, fakepathId, fakepath);
+        LOG(logInfo) << "Printing tree";
+        w->printTree(fakepathId);
+        LOG(logInfo) << "Tree printed";
+        break;
       case options::opClear :
         initFakepath(w, fakepathId, fakepath);
         LOG(logWarning) << "Deleting everything on fakepath \"" << fakepath << '\"';

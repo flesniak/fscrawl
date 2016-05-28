@@ -18,6 +18,7 @@ options::options()
     ("crawl", "Crawl for new and changed files (default)")
     ("check,c", "Check the hash of every file (requires -T/M/S)")
     ("verify,v", "Verify the tree structure - takes some time")
+    ("print,P", "Print the tree structure to standard output")
     ("clear", "Delete the tree for this fakepath, others will be kept")
     ("purge", "Delete all data from both tables completely")
     ("help,h", "Display this help and exit")
@@ -25,7 +26,7 @@ options::options()
   ;
 
   p_opts_required.add_options()
-    ("basedir,b", value<string>(&p_basedir), "Root directory to work on (for crawl/check)")
+    ("basedir,b", value<string>(&p_basedir)->default_value(""), "Root directory to work on (for crawl/check)")
   ;
 
   p_opts_optional.add_options()
@@ -58,7 +59,7 @@ options& options::getInstance() {
   return self;
 }
 
-//returns 0 if ready for operation, 1 on intened quit, 2 on error quit
+//returns 0 if ready for operation, 1 on intended quit, 2 on error quit
 int options::parse(int argc, char** argv) {
   //make basedir a positional parameter, thus -b/--basedir can be omitted
   positional_options_description pd;
@@ -106,15 +107,15 @@ int options::parse(int argc, char** argv) {
     p_operation = opCrawl; // take opCrawl as default
 
   //crawl and check modes require a basedir
-  if( p_basedir.empty() && (p_operation == opCrawl || p_operation == opCheck) ) {
-    LOG(logError) << "Operations crawl and check require a basedir";
-    printUsage();
-    return 2;
-  }
-
-  //strip trailing slashes, don't try that on an empty basedir string
-  while( p_basedir.at(p_basedir.size()-1) == '/' )
-    p_basedir.erase(p_basedir.size()-1);
+  if (p_basedir.empty()) {
+    if (p_operation == opCrawl || p_operation == opCheck) {
+      LOG(logError) << "Operations crawl and check require a basedir";
+      printUsage();
+      return 2;
+    }
+  } else //strip trailing slashes, don't try that on an empty basedir string
+    while( p_basedir.at(p_basedir.size()-1) == '/' )
+      p_basedir.erase(p_basedir.size()-1);
 
   //check parameters that need a hash algorithm selected
   for(Hasher::hashType_t ht = Hasher::md5; ht < Hasher::hashTypeCount; ht = (Hasher::hashType_t)((int)ht+1)) {

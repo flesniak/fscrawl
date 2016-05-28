@@ -588,6 +588,29 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
   LOG(logDebug) << "leaving directory " << path;
 }
 
+void worker::printTree(uint32_t parent, const string& path) {
+  if( !p_databaseInitialized )
+    initDatabase();
+
+  vector<entry_t*> entryCache;
+  LOG(logDebug) << "fetching directory entries from db for caching";
+  cacheDirectoryEntriesFromDB(parent, entryCache);
+
+  for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) {
+    string subpath = path+"/"+(*it)->name;
+    if( (*it)->type == entry_t::file ) {
+      cout << subpath << endl;
+      p_statistics.files++;
+    } else {
+      LOG(logDetailed) << "Entering subdirectory " << subpath;
+      printTree((*it)->id, subpath);
+      p_statistics.directories++;
+    }
+    if (!p_run) //break loop on global abort condition
+      break;
+  }
+}
+
 void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry) {
   if (!p_run) //exit and do not process entries which may be unprocessed
     return;
@@ -847,7 +870,7 @@ void worker::verifyTree() {
     uint32_t parent = res->getUInt(2);
     if( parent == 0 || find(idCache->begin(), idCache->end(), parent) == idCache->end() ) {
       LOG(logWarning) << "Parent " << parent << " of file " << id << " does not exist. Deleting that file";
-      p_prepDeleteFile->setUInt(1,id); 
+      p_prepDeleteFile->setUInt(1,id);
       p_prepDeleteFile->execute();
     }
   }
@@ -949,7 +972,7 @@ void worker::watch(const string& path, uint32_t id) {
           if( dbEntry.id == 0 ) {
             //new files should have been created by IN_CREATE, now we should only need to update size/mtime/hash
             LOG(logWarning) << "Modified file " << event->name << " was not yet in database, fixing.";
-            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime, dbEntry.hash); 
+            insertFile(p.first, fsEntry.name, fsEntry.size, fsEntry.mtime, dbEntry.hash);
             updateTreeProperties(p.first, fsEntry.size, fsEntry.mtime);
           } else {
             LOG(logInfo) << "Updating file " << event->name;
