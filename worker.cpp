@@ -1,6 +1,7 @@
 #include "worker.h"
 #include "logger.h"
 #include "hasher.h"
+#include "options.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -599,6 +600,8 @@ void worker::printTree(uint32_t parent, const string& path) {
   for( vector<entry_t*>::iterator it = entryCache.begin(); it != entryCache.end(); it++ ) {
     string subpath = path+"/"+(*it)->name;
     if( (*it)->type == entry_t::file ) {
+      if (options::getInstance().count("print-sums"))
+        cout << (*it)->hash << "  ";
       cout << subpath << endl;
       p_statistics.files++;
     } else {
