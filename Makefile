@@ -20,7 +20,7 @@ debug: $(EXECUTABLE)
 release: $(EXECUTABLE)
 
 $(EXECUTABLE): $(OBJS)
-	$(CXX) $(LDFLAGS) $(CFLAGS) -o $(EXECUTABLE) $(OBJS)
+	$(CXX) $(CFLAGS) -o $(EXECUTABLE) $(OBJS) $(LDFLAGS)
 
 %.o: %.cpp
 	$(CXX) $(CFLAGS) -c -o $@ $<
