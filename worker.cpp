@@ -193,6 +193,8 @@ worker::entry_t worker::getDirectoryById(uint32_t id) {
     e.parent = res->getUInt(2);
     e.size = res->getUInt64(3);
     e.mtime = res->getUInt(4);
+  } else if (id == 0) {
+    e.name = "<ROOT>";
   }
   delete res;
   return e;
