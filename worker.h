@@ -79,6 +79,9 @@ public:
   //Sets internal conditions to abort crawling, hashing or watching
   void abort();
 
+  //returns strerror as std::string
+  static string errnoString();
+
 private:
   void cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCache);
   void cacheParent(uint32_t id, uint32_t parent);
@@ -103,8 +106,6 @@ private:
   void updateFile(uint32_t id, uint64_t size, time_t mtime, const string& hash);
   void updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime);
   void hashFile(entry_t* entry, const string& path) const;
-
-  string errnoString();
 
   string p_basePath;
   bool p_databaseInitialized;
