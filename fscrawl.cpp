@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <csignal>
+#include <dirent.h>
 
 #include <cppconn/driver.h>
 #include <cppconn/exception.h>
@@ -50,6 +51,26 @@ void signalHandler(int signum) {
   interruptsReceived++;
 }
 
+bool directoryEmpty(const string& path) {
+  DIR* dir = opendir(path.c_str());
+  if( !dir ) {
+    LOG(logError) << "failed to read directory " << path << ": " << worker::errnoString();
+    return false;
+  }
+
+  int n = 0;
+  while( readdir(dir) ) { // readdir returns NULL when end of directory is reached
+    if( ++n > 2 ) // more files than . and .. -> directory is not empty
+      break;
+  }
+  closedir(dir);
+
+  if (n <= 2)
+    return true;
+  else
+    return false;
+}
+
 int main(int argc, char* argv[]) {
   switch (OPTS.parse(argc, argv)) {
     case 1 : return 0; // immediate quit (help, version)
@@ -95,6 +116,14 @@ int main(int argc, char* argv[]) {
   try {
     switch (OPTS.getOperation()) {
       case options::opCrawl :
+        if( directoryEmpty(basedir) ) {
+          if (!OPTS.allowEmpty()) {
+            LOG(logError) << "Basedir " << basedir << " is empty. Use --allow-empty if intended or --clear to delete all files";
+            exit(1);
+          } else {
+            LOG(logWarning) << "Basedir " << basedir << " is empty, will remove all files.";
+          }
+        }
         initFakepath(w, fakepathId, fakepath);
         LOG(logInfo) << "Parsing directory \"" << basedir << '\"';
         w->parseDirectory(basedir, fakepathId);

@@ -23,6 +23,7 @@ public:
   bool watch() const { return count("watch"); };
   const string& basedir() const { return p_basedir; };
   Hasher::hashType_t hashType() const { return p_hashType; };
+  bool allowEmpty() const { return count("allow-empty"); };
 
   enum operation_t { opNone, opCrawl, opCheck, opVerify, opPrint, opClear, opPurge };
   operation_t getOperation() const { return p_operation; };
