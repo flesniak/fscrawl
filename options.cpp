@@ -46,6 +46,7 @@ options::options()
     ("dir-table", value<string>()->default_value("fscrawl_directories"), "Table to use for directories")
     ("print-sums", "When printing the tree structure, additionally print the hash of every file")
     ("allow-empty", "Allow basedir to be empty, resulting in removing all files from db")
+    ("dry-run", "Test run only, don't change anything")
   ;
 
   p_opts_all.add(p_opts_mode).add(p_opts_required).add(p_opts_optional);
