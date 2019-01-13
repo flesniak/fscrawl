@@ -27,6 +27,7 @@ worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
                                                 p_watchDescriptor(0),
                                                 p_forceHashing(0),
                                                 p_run(true),
+                                                p_dryRun(false),
                                                 p_hasher(0),
                                                 p_connection(dbConnection),
                                                 p_prepQueryFileById(0),
@@ -55,6 +56,7 @@ void worker::abort() {
 }
 
 void worker::setDryRun(bool on) {
+  LOG(logInfo) << "performing dry run";
   p_dryRun = on;
 }
 

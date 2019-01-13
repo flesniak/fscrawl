@@ -100,6 +100,7 @@ int main(int argc, char* argv[]) {
   LOG(logDebug) << "setting up worker";
   w = new worker(con);
   w->setTables(OPT_STR("dir-table"),OPT_STR("file-table"));
+  w->setDryRun(options::getInstance().count("dry-run"));
 
   signal(SIGINT, signalHandler);
   signal(SIGTERM, signalHandler);
