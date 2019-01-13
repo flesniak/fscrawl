@@ -44,6 +44,7 @@ public:
   void setConnection(sql::Connection* dbConnection);
   sql::Connection* getConnection() const;
   void setInheritance(bool inheritSize, bool inheritMTime);
+  void setDryRun(bool on);
   void setTables(const string& directoryTable, const string& fileTable);
   void setHasher(Hasher* hasher);
   Hasher* getHasher() const;
@@ -118,6 +119,7 @@ private:
   map< int, pair<uint32_t,string> > p_watches; //stores inotify watch descriptors and their corresponding ids and paths
   bool p_forceHashing;
   bool p_run;
+  bool p_dryRun;
 
   Hasher* p_hasher;
 

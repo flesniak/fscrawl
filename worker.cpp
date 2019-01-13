@@ -54,6 +54,10 @@ void worker::abort() {
   p_run = false;
 }
 
+void worker::setDryRun(bool on) {
+  p_dryRun = on;
+}
+
 string worker::ascendPath(uint32_t id, uint32_t downToId, entry_t::type_t type) {
   if( !p_databaseInitialized )
     initDatabase();
@@ -111,6 +115,8 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
 void worker::clearDatabase() {
   if( !p_databaseInitialized )
     initDatabase();
+  if (p_dryRun)
+    return;
   p_stmt->execute("DROP TABLE "+p_fileTable);
   p_stmt->execute("DROP TABLE "+p_directoryTable);
   LOG(logWarning) << "Database tables dropped, data is now gone";
@@ -136,6 +142,8 @@ void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" i
   LOG(logDebug) << "got " << childIds.size() << " children of directory " << id;
   for( list<uint32_t>::iterator it = childIds.begin(); it != childIds.end(); it++ )
     deleteDirectory( *it );
+  if (p_dryRun)
+    return;
   p_prepDeleteFiles->setUInt(1,id);
   p_prepDeleteFiles->execute(); //now, delete every file in this directory
   p_prepDeleteDir->setUInt(1,id);
@@ -146,6 +154,8 @@ void worker::deleteFile(uint32_t id) {
   if( !p_databaseInitialized )
     initDatabase();
   LOG(logDebug) << "deleting file id " << id;
+  if (p_dryRun)
+    return;
   p_prepDeleteFile->setUInt(1,id);
   p_prepDeleteFile->execute();
 }
@@ -303,6 +313,8 @@ void worker::hashCheck(const string& path, uint32_t parent) {
 
 void worker::initDatabase() {
   LOG(logDebug) << "create tables if not exists"; //create database tables in case they do not exist
+  if (p_dryRun)
+    return;
   p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_directoryTable+" "
                   "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY, "
                   "name VARCHAR(255) NOT NULL, "
@@ -423,6 +435,9 @@ void worker::inheritProperties(entry_t* parent, const entry_t* entry) const {
 }
 
 uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t size, time_t mtime) {
+  LOG(logDebug) << "inserting dir " << name << " size " << size << " mtime " << mtime << " parent " << parent;
+  if (p_dryRun)
+    return ~0;
   p_prepInsertDir->setString(1,name);
   p_prepInsertDir->setUInt(2,parent);
   p_prepInsertDir->setUInt64(3,size);
@@ -436,11 +451,13 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
   else
     LOG(logError) << "Insert statement failed for " << name;
   delete res;
-  LOG(logDebug) << "inserted dir id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime;
   return id;
 }
 
 uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, time_t mtime, const string& hash) {
+  LOG(logDebug) << "inserting file " << name << " size " << size << " mtime " << mtime << " hash " << hash << " parent " << parent;
+  if (p_dryRun)
+    return ~0;
   p_prepInsertFile->setString(1,name);
   p_prepInsertFile->setUInt(2,parent);
   p_prepInsertFile->setUInt64(3,size);
@@ -458,7 +475,6 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
   else
     LOG(logError) << "Insert statement failed for " << name;
   delete res;
-  LOG(logDebug) << "inserted file file id " << id << " parent " << parent << " name " << name << " size " << size << " mtime " << mtime << " hash " << hash;
   return id;
 }
 
@@ -617,7 +633,7 @@ void worker::printTree(uint32_t parent, const string& path) {
 }
 
 void worker::processChangedEntries(vector<entry_t*>& entries, entry_t* parentEntry) {
-  if (!p_run || options::getInstance().count("dry-run"))
+  if (!p_run)
     return;
   vector<entry_t*>::iterator it = entries.begin();
   while( it != entries.end() ) {
@@ -781,6 +797,8 @@ void worker::setupWatches(const string& path, uint32_t id) {
 
 void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
   LOG(logDebug) << "updating dir id " << id << " size " << size << " mtime " << mtime;
+  if (p_dryRun)
+    return;
   p_prepUpdateDir->setUInt64(1,size);
   p_prepUpdateDir->setUInt(2,mtime);
   p_prepUpdateDir->setUInt(3,id);
@@ -789,6 +807,8 @@ void worker::updateDirectory(uint32_t id, uint64_t size, time_t mtime) {
 
 void worker::updateFile(uint32_t id, uint64_t size, time_t mtime, const string& hash) {
   LOG(logDebug) << "updating file id " << id << " size " << size << " mtime " << mtime << " hash " << hash;
+  if (p_dryRun)
+    return;
   p_prepUpdateFile->setUInt64(1,size);
   p_prepUpdateFile->setUInt(2,mtime);
   if( hash.length() )
@@ -801,6 +821,8 @@ void worker::updateFile(uint32_t id, uint64_t size, time_t mtime, const string& 
 
 void worker::updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime) {
   LOG(logDetailed) << "Updating directory id " << firstParent << " recursively";
+  if (p_dryRun)
+    return;
   entry_t e = getDirectoryById(firstParent);
   if( p_inheritMTime && e.mtime < newMTime )
     e.mtime = newMTime;
@@ -831,11 +853,13 @@ void worker::verifyTree() {
       LOG(logWarning) << "id " << id << " is it's own parent. Deleting!";
       tempId = 0; //indicate failure
       tempParentId = 0;
-      stringstream ss;
-      ss << "DELETE FROM " << p_directoryTable << " WHERE parent=" << id;
-      p_stmt->execute(ss.str());
-      p_prepDeleteFiles->setUInt(1,id); //delete all files with parent "id"
-      p_prepDeleteFiles->execute();
+      if (!p_dryRun) {
+        stringstream ss;
+        ss << "DELETE FROM " << p_directoryTable << " WHERE parent=" << id;
+        p_stmt->execute(ss.str());
+        p_prepDeleteFiles->setUInt(1,id); //delete all files with parent "id"
+        p_prepDeleteFiles->execute();
+      }
     }
     tempIdCache.push_back(id); //pre-cache id in case it may be valid
     //now we check if we can find the given parent of id
@@ -875,8 +899,10 @@ void worker::verifyTree() {
     uint32_t parent = res->getUInt(2);
     if( parent == 0 || find(idCache->begin(), idCache->end(), parent) == idCache->end() ) {
       LOG(logWarning) << "Parent " << parent << " of file " << id << " does not exist. Deleting that file";
-      p_prepDeleteFile->setUInt(1,id);
-      p_prepDeleteFile->execute();
+      if (!p_dryRun) {
+        p_prepDeleteFile->setUInt(1,id);
+        p_prepDeleteFile->execute();
+      }
     }
   }
   delete res;
