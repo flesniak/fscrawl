@@ -1,8 +1,8 @@
 EXECUTABLE = fscrawl
 CFLAGS = -Wall -Wextra -std=c++11
-release: CFLAGS += -s -O2
+release: CFLAGS += -s -O3
 debug:   CFLAGS += -g -O1
-LDFLAGS = -lmysqlcppconn -lstdc++ -lrhash -lboost_program_options
+LDFLAGS = -lmysqlcppconn -lrhash -lboost_program_options
 
 GIT_VERSION := $(shell git describe --abbrev=4 --dirty --always --tags 2>/dev/null)
 ifdef GIT_VERSION
