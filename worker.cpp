@@ -137,14 +137,14 @@ void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" i
   }
   p_prepQueryDirsByParent->release();
   LOG(logDebug) << "got " << childIds.size() << " children of directory " << id;
+  if (!p_dryRun) {
+    p_prepDeleteFiles->setUInt(1,id);
+    p_prepDeleteFiles->execute(); //now, delete every file in this directory
+    p_prepDeleteDir->setUInt(1,id);
+    p_prepDeleteDir->execute(); //finally, delete this directory
+  }
   for( vector<uint32_t>::iterator it = childIds.begin(); it != childIds.end(); it++ )
     deleteDirectory( *it );
-  if (p_dryRun)
-    return;
-  p_prepDeleteFiles->setUInt(1,id);
-  p_prepDeleteFiles->execute(); //now, delete every file in this directory
-  p_prepDeleteDir->setUInt(1,id);
-  p_prepDeleteDir->execute(); //finally, delete this directory
 }
 
 void worker::deleteFile(uint32_t id) {
@@ -840,7 +840,7 @@ void worker::verifyTree() {
 
   LOG(logDetailed) << "Verifying directories";
   PreparedStatementWrapper* stmt = PreparedStatementWrapper::create(this, "SELECT id,parent FROM "+p_directoryTable);
-  stmt->execute();
+  stmt->executeQuery();
   while( p_run && stmt->next() ) { //loop through all directories
     uint32_t id = stmt->getUInt(1);
     uint32_t parent = stmt->getUInt(2);
@@ -877,22 +877,24 @@ void worker::verifyTree() {
         tempId = 0; //indicate failure
         tempParentId = 0;
       }
+      p_prepQueryParentOfDir->release();
       if( tempParentId == id ) { //loop detection
         LOG(logWarning) << "Detected loop between id " << tempId << " and id " << id;
         deleteDirectory(id); //will delete a loop reliably
         tempId = 0; //indicate failure
         tempParentId = 0;
       }
-      p_prepQueryParentOfDir->release();
     }
     LOG(logDebug) << "Traceback complete, tempId " << tempId << " tempParentId " << tempParentId;
     if( tempId != 0 ) //only cache if valid
       idCache->merge(tempIdCache); //cache all temporary ids as the trace is okay
+    p_statistics.directories++;
   }
   delete stmt;
 
   LOG(logDetailed) << "Verifying files";
   stmt = PreparedStatementWrapper::create(this, "SELECT id,parent FROM "+p_fileTable);
+  stmt->executeQuery();
   while( p_run && stmt->next() ) {
     uint32_t id = stmt->getUInt(1);
     uint32_t parent = stmt->getUInt(2);
@@ -903,6 +905,7 @@ void worker::verifyTree() {
         p_prepDeleteFile->execute();
       }
     }
+    p_statistics.files++;
   }
   delete stmt;
   delete idCache;
