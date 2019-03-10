@@ -75,7 +75,7 @@ private:
   std::string p_query;
   std::vector<MYSQL_BIND> p_binds;
   std::vector<std::shared_ptr<void>> p_params;
-  int p_resultOffset;
+  bool p_rowValid;
 };
 
 #endif //PREPARED_STATEMENT_WRAPPER_H

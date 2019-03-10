@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
     mysql_optionsv(con, MYSQL_OPT_RECONNECT, &reconnect);
     mysql_optionsv(con, MYSQL_OPT_COMPRESS, 0);
 
-    MYSQL* res = mysql_real_connect(con,
+    con = mysql_real_connect(con,
       OPT_STR("host").c_str(),
       OPT_STR("user").c_str(),
       OPT_STR("password").c_str(),
@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
       0, /* port number, 0 for default */
       NULL, /* socket file or named pipe name */
       CLIENT_FOUND_ROWS | CLIENT_MULTI_STATEMENTS);
-    if (!res)
+    if (!con)
       throw runtime_error("mysql_real_connect failed: "+string(mysql_error(con)));
   } catch( exception& e ) {
     LOG(logError) << "Failed to connect: " << e.what();

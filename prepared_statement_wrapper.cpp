@@ -4,6 +4,7 @@
 #include "sqlexception.h"
 
 #include <unistd.h>
+#include <string.h>
 
 PreparedStatementWrapper::PreparedStatementWrapper()
   : p_reconnectAttempts(0),
@@ -94,8 +95,7 @@ int PreparedStatementWrapper::executeQuery() {
   if (ret)
     throw SQLException("mysql_stmt_store_result failed", p_stmt);
 
-  p_resultOffset = -1;
-  LOG(logDebug) << "statement executed: \"" << p_query << "\", rows: " << rowsCount();
+  p_rowValid = false;
   return rowsCount();
 }
 
@@ -150,7 +150,6 @@ int PreparedStatementWrapper::executeQuery() {
 // }
 
 void PreparedStatementWrapper::setInt(unsigned int parameterIndex, int32_t value) {
-  testConnection();
   int32_t* tmp = new int32_t(value);
   p_binds[parameterIndex-1].buffer_type = MYSQL_TYPE_LONG;
   p_binds[parameterIndex-1].buffer = tmp;
@@ -159,7 +158,6 @@ void PreparedStatementWrapper::setInt(unsigned int parameterIndex, int32_t value
 }
 
 void PreparedStatementWrapper::setUInt(unsigned int parameterIndex, uint32_t value) {
-  testConnection();
   uint32_t* tmp = new uint32_t(value);
   p_binds[parameterIndex-1].buffer_type = MYSQL_TYPE_LONG;
   p_binds[parameterIndex-1].buffer = tmp;
@@ -168,7 +166,6 @@ void PreparedStatementWrapper::setUInt(unsigned int parameterIndex, uint32_t val
 }
 
 void PreparedStatementWrapper::setUInt64(unsigned int parameterIndex, uint64_t value) {
-  testConnection();
   uint64_t* tmp = new uint64_t(value);
   p_binds[parameterIndex-1].buffer_type = MYSQL_TYPE_LONGLONG;
   p_binds[parameterIndex-1].buffer = tmp;
@@ -177,17 +174,16 @@ void PreparedStatementWrapper::setUInt64(unsigned int parameterIndex, uint64_t v
 }
 
 void PreparedStatementWrapper::setNull(unsigned int parameterIndex, int sqlType __attribute__((unused))) {
-  testConnection();
   p_binds[parameterIndex-1].buffer_type = MYSQL_TYPE_NULL;
   p_binds[parameterIndex-1].buffer = 0;
   p_params[parameterIndex-1].reset();
 }
 
 void PreparedStatementWrapper::setString(unsigned int parameterIndex, const string& value) {
-  testConnection();
   string* tmp = new string(value);
   p_binds[parameterIndex-1].buffer_type = MYSQL_TYPE_STRING;
   p_binds[parameterIndex-1].buffer = const_cast<char*>(tmp->c_str());
+  p_binds[parameterIndex-1].buffer_length = tmp->length();
   p_params[parameterIndex-1].reset(tmp);
 }
 
@@ -197,19 +193,20 @@ void PreparedStatementWrapper::setString(unsigned int parameterIndex, const stri
 // }
 
 uint32_t PreparedStatementWrapper::getUInt(unsigned int index) {
-  if (p_resultOffset >= rowsCount() || p_resultOffset < 0)
+  if (!p_rowValid)
     throw out_of_range("no result row available");
-  if (index >= mysql_stmt_field_count(p_stmt))
+  if (index > mysql_stmt_field_count(p_stmt))
     throw out_of_range("field index out of range");
 
   uint32_t tmp;
   MYSQL_BIND bind;
+  memset(&bind, 0, sizeof(bind));
   bind.buffer_type = MYSQL_TYPE_LONG;
   bind.buffer = &tmp;
   bind.buffer_length = sizeof(tmp);
   bind.is_unsigned = true;
-  int ret = mysql_stmt_fetch_column(p_stmt, &bind, index-1, p_resultOffset+1);
-  LOG(logDebug) << "fetch column " << ret;
+
+  int ret = mysql_stmt_fetch_column(p_stmt, &bind, index-1, 0);
   if (ret)
     throw SQLException("failed to getUInt", p_stmt);
 
@@ -217,18 +214,20 @@ uint32_t PreparedStatementWrapper::getUInt(unsigned int index) {
 }
 
 uint64_t PreparedStatementWrapper::getUInt64(unsigned int index) {
-  if (p_resultOffset >= rowsCount() || p_resultOffset < 0)
+  if (!p_rowValid)
     throw out_of_range("no result row available");
-  if (index >= mysql_stmt_field_count(p_stmt))
+  if (index > mysql_stmt_field_count(p_stmt))
     throw out_of_range("field index out of range");
 
   uint64_t tmp;
   MYSQL_BIND bind;
+  memset(&bind, 0, sizeof(bind));
   bind.buffer_type = MYSQL_TYPE_LONGLONG;
   bind.buffer = &tmp;
   bind.buffer_length = sizeof(tmp);
   bind.is_unsigned = true;
-  int ret = mysql_stmt_fetch_column(p_stmt, &bind, index, p_resultOffset);
+
+  int ret = mysql_stmt_fetch_column(p_stmt, &bind, index-1, 0);
   if (ret)
     throw SQLException("failed to getUInt64", p_stmt);
 
@@ -236,17 +235,19 @@ uint64_t PreparedStatementWrapper::getUInt64(unsigned int index) {
 }
 
 std::string PreparedStatementWrapper::getString(unsigned int index) {
-  if (p_resultOffset >= rowsCount() || p_resultOffset < 0)
+  if (!p_rowValid)
     throw out_of_range("no result row available");
-  if (index >= mysql_stmt_field_count(p_stmt))
+  if (index > mysql_stmt_field_count(p_stmt))
     throw out_of_range("field index out of range");
 
   char tmp[256];
   MYSQL_BIND bind;
+  memset(&bind, 0, sizeof(bind));
   bind.buffer_type = MYSQL_TYPE_STRING;
   bind.buffer = tmp;
   bind.buffer_length = sizeof(tmp);
-  int ret = mysql_stmt_fetch_column(p_stmt, &bind, index, p_resultOffset);
+
+  int ret = mysql_stmt_fetch_column(p_stmt, &bind, index-1, 0);
   if (ret)
     throw SQLException("failed to getString", p_stmt);
 
@@ -254,14 +255,8 @@ std::string PreparedStatementWrapper::getString(unsigned int index) {
 }
 
 bool PreparedStatementWrapper::next() {
-  if (p_resultOffset+1 < rowsCount()) {
-    p_resultOffset++;
-    LOG(logDebug) << "PSW next(), now " << p_resultOffset;
-    return true;
-  }
-  LOG(logDebug) << "PSW next(), at end " << p_resultOffset;
-  return false;
-  // return mysql_stmt_next_result(p_stmt) == 0 ? true : false;
+  p_rowValid = mysql_stmt_fetch(p_stmt) == 0;
+  return p_rowValid;
 }
 
 void PreparedStatementWrapper::release() {
