@@ -4,19 +4,18 @@
 #include <csignal>
 #include <dirent.h>
 
-#include <cppconn/driver.h>
-#include <cppconn/exception.h>
-#include <mysql_connection.h>
+#include <mysql.h>
 
 #include "worker.h"
 #include "logger.h"
 #include "hasher.h"
 #include "options.h"
+#include "sqlexception.h"
 
 using namespace std;
 
 static worker* w = 0;
-static sql::Connection* con = 0;
+static MYSQL* con = 0;
 
 void initFakepath(worker* w, uint32_t& fakepathId, const string& fakepath) {
   if( !fakepath.empty() ) {
@@ -27,11 +26,13 @@ void initFakepath(worker* w, uint32_t& fakepathId, const string& fakepath) {
 }
 
 void cleanup() {
-  if (w)
+  if (w) {
     delete w;
+    w = 0;
+  }
   if (con) {
-    con->close();
-    delete con;
+    mysql_close(con);
+    con = 0;
   }
 }
 
@@ -82,16 +83,22 @@ int main(int argc, char* argv[]) {
 
   try {
     LOG(logInfo) << "Connecting to SQL server";
-    sql::ConnectOptionsMap options;
-    //options["hostName"] = OPTS["host"].as<string>;
-    options["hostName"] = OPT_STR("host");
-    options["userName"] = OPT_STR("user");
-    options["password"] = OPT_STR("password");
-    options["schema"]   = OPT_STR("database");
-    //we handle reconnecting on our own to ensure that prepared statements are re-prepared after lossing connection
-    //however this option is useful for debugging if an unprotected operation such as statement prepare is executed
-    options["OPT_RECONNECT"] = true;
-    con = get_driver_instance()->connect(options);
+    con = mysql_init(0);
+
+    bool reconnect = 1;
+    mysql_optionsv(con, MYSQL_OPT_RECONNECT, &reconnect);
+    mysql_optionsv(con, MYSQL_OPT_COMPRESS, 0);
+
+    MYSQL* res = mysql_real_connect(con,
+      OPT_STR("host").c_str(),
+      OPT_STR("user").c_str(),
+      OPT_STR("password").c_str(),
+      OPT_STR("database").c_str(),
+      0, /* port number, 0 for default */
+      NULL, /* socket file or named pipe name */
+      CLIENT_FOUND_ROWS | CLIENT_MULTI_STATEMENTS);
+    if (!res)
+      throw runtime_error("mysql_real_connect failed: "+string(mysql_error(con)));
   } catch( exception& e ) {
     LOG(logError) << "Failed to connect: " << e.what();
     exit(1);
@@ -178,7 +185,7 @@ int main(int argc, char* argv[]) {
       w->watch(basedir, fakepathId);
       LOG(logInfo) << "Finished watching";
     }
-  } catch( sql::SQLException& e ) {
+  } catch( SQLException& e ) {
     LOG(logError) << "SQL Exception: " << e.what();
     exit(1);
   } catch( exception& e ) {

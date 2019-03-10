@@ -1,12 +1,13 @@
 #ifndef WORKER_H
 #define WORKER_H
 
-#include <stdint.h>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <cppconn/driver.h>
+#include <mysql.h>
+#include <stdint.h>
 
 #include "prepared_statement_wrapper.h"
 
@@ -16,7 +17,7 @@ class Hasher;
 
 class worker {
 public:
-  worker(sql::Connection* dbConnection = 0);
+  worker(MYSQL* dbConnection = 0);
   ~worker();
 
   struct statistics {
@@ -41,8 +42,8 @@ public:
     string hash; //only valid for files
   };
 
-  void setConnection(sql::Connection* dbConnection);
-  sql::Connection* getConnection() const;
+  void setConnection(MYSQL* dbConnection);
+  MYSQL* getConnection() const;
   void setInheritance(bool inheritSize, bool inheritMTime);
   void setDryRun(bool on);
   void setTables(const string& directoryTable, const string& fileTable);
@@ -108,6 +109,8 @@ private:
   void updateTreeProperties(uint32_t firstParent, int64_t sizeDiff, time_t newMTime);
   void hashFile(entry_t* entry, const string& path) const;
 
+  void query(const string& query);
+
   string p_basePath;
   bool p_databaseInitialized;
   string p_directoryTable;
@@ -123,7 +126,7 @@ private:
 
   Hasher* p_hasher;
 
-  sql::Connection* p_connection;
+  MYSQL* p_connection;
   PreparedStatementWrapper* p_prepQueryFileById;
   PreparedStatementWrapper* p_prepQueryFileByName;
   PreparedStatementWrapper* p_prepQueryFilesByParent;
@@ -139,7 +142,6 @@ private:
   PreparedStatementWrapper* p_prepUpdateDir;
   PreparedStatementWrapper* p_prepDeleteDir;
   PreparedStatementWrapper* p_prepLastInsertID;
-  sql::Statement* p_stmt;
 };
 
 #endif //WORKER_H

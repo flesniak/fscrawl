@@ -1,51 +1,46 @@
 #ifndef PREPARED_STATEMENT_WRAPPER_H
 #define PREPARED_STATEMENT_WRAPPER_H
 
-#include <cppconn/resultset.h>
-#include <cppconn/sqlstring.h>
+#include <memory>
+#include <string>
+#include <vector>
 
-namespace sql {
-  class Connection;
-  class PreparedStatement;
-  class ParameterMetaData;
-  class ResultSetMetaData;
-  class ResultSet;
-};
+#include <mysql.h>
 
 class worker;
 
 class PreparedStatementWrapper {
 public:
   ~PreparedStatementWrapper();
-  static PreparedStatementWrapper* create(worker* w, const sql::SQLString& sql);
+  static PreparedStatementWrapper* create(worker* w, const std::string& sql);
 
-  //void clearParameters();
   void reprepare();
+  void close();
 
-  bool execute(const sql::SQLString& sql);
+  // bool execute(const std::string& sql);
   bool execute();
 
-  sql::ResultSet* executeQuery(const sql::SQLString& sql);
-  sql::ResultSet* executeQuery();
+  // sql::ResultSet* executeQuery(const std::string& sql);
+  int executeQuery();
 
-  int executeUpdate(const sql::SQLString& sql);
-  int executeUpdate();
+  // int executeUpdate(const std::string& sql);
+  // int executeUpdate();
 
-  sql::ResultSetMetaData * getMetaData();
+  // sql::ResultSetMetaData * getMetaData();
 
-  sql::ParameterMetaData * getParameterMetaData();
+  // sql::ParameterMetaData * getParameterMetaData();
 
-  bool getMoreResults();
+  // bool getMoreResults();
 
-  void setBigInt(unsigned int parameterIndex, const sql::SQLString& value);
+  // void setBigInt(unsigned int parameterIndex, const std::string& value);
 
-  void setBlob(unsigned int parameterIndex, std::istream * blob);
+  // void setBlob(unsigned int parameterIndex, std::istream * blob);
 
-  void setBoolean(unsigned int parameterIndex, bool value);
+  // void setBoolean(unsigned int parameterIndex, bool value);
 
-  void setDateTime(unsigned int parameterIndex, const sql::SQLString& value);
+  // void setDateTime(unsigned int parameterIndex, const std::string& value);
 
-  void setDouble(unsigned int parameterIndex, double value);
+  // void setDouble(unsigned int parameterIndex, double value);
 
   void setInt(unsigned int parameterIndex, int32_t value);
 
@@ -57,9 +52,17 @@ public:
 
   void setNull(unsigned int parameterIndex, int sqlType);
 
-  void setString(unsigned int parameterIndex, const sql::SQLString& value);
+  void setString(unsigned int parameterIndex, const std::string& value);
 
-  sql::PreparedStatement* setResultSetType(sql::ResultSet::enum_type type);
+  // sql::PreparedStatement* setResultSetType(sql::ResultSet::enum_type type);
+
+  // emulate sql::ResultSet
+  uint32_t getUInt(unsigned int index);
+  uint64_t getUInt64(unsigned int index);
+  std::string getString(unsigned int index);
+  bool next();
+  void release(); // delete cached result data
+  int rowsCount();
 
 private:
   PreparedStatementWrapper();
@@ -68,8 +71,11 @@ private:
   int p_reconnectAttempts;
 
   worker* p_worker;
-  sql::PreparedStatement* p_stmt;
-  sql::SQLString p_string;
+  MYSQL_STMT* p_stmt;
+  std::string p_query;
+  std::vector<MYSQL_BIND> p_binds;
+  std::vector<std::shared_ptr<void>> p_params;
+  int p_resultOffset;
 };
 
 #endif //PREPARED_STATEMENT_WRAPPER_H

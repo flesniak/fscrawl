@@ -2,6 +2,7 @@
 #include "logger.h"
 #include "hasher.h"
 #include "options.h"
+#include "sqlexception.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -16,36 +17,32 @@
 #include <sys/stat.h>
 #include <poll.h>
 
-#include <cppconn/connection.h>
-#include <cppconn/statement.h>
-
-worker::worker(sql::Connection* dbConnection) : p_databaseInitialized(false),
-                                                p_directoryTable("fscrawl_directories"),
-                                                p_fileTable("fscrawl_files"),
-                                                p_inheritMTime(false),
-                                                p_inheritSize(true),
-                                                p_watchDescriptor(0),
-                                                p_forceHashing(0),
-                                                p_run(true),
-                                                p_dryRun(false),
-                                                p_hasher(0),
-                                                p_connection(dbConnection),
-                                                p_prepQueryFileById(0),
-                                                p_prepQueryFileByName(0),
-                                                p_prepQueryFilesByParent(0),
-                                                p_prepInsertFile(0),
-                                                p_prepUpdateFile(0),
-                                                p_prepDeleteFile(0),
-                                                p_prepDeleteFiles(0),
-                                                p_prepQueryDirById(0),
-                                                p_prepQueryDirByName(0),
-                                                p_prepQueryDirsByParent(0),
-                                                p_prepQueryParentOfDir(0),
-                                                p_prepInsertDir(0),
-                                                p_prepUpdateDir(0),
-                                                p_prepDeleteDir(0),
-                                                p_prepLastInsertID(0),
-                                                p_stmt(p_connection->createStatement()) {
+worker::worker(MYSQL* dbConnection) : p_databaseInitialized(false),
+                                      p_directoryTable("fscrawl_directories"),
+                                      p_fileTable("fscrawl_files"),
+                                      p_inheritMTime(false),
+                                      p_inheritSize(true),
+                                      p_watchDescriptor(0),
+                                      p_forceHashing(0),
+                                      p_run(true),
+                                      p_dryRun(false),
+                                      p_hasher(0),
+                                      p_connection(dbConnection),
+                                      p_prepQueryFileById(0),
+                                      p_prepQueryFileByName(0),
+                                      p_prepQueryFilesByParent(0),
+                                      p_prepInsertFile(0),
+                                      p_prepUpdateFile(0),
+                                      p_prepDeleteFile(0),
+                                      p_prepDeleteFiles(0),
+                                      p_prepQueryDirById(0),
+                                      p_prepQueryDirByName(0),
+                                      p_prepQueryDirsByParent(0),
+                                      p_prepQueryParentOfDir(0),
+                                      p_prepInsertDir(0),
+                                      p_prepUpdateDir(0),
+                                      p_prepDeleteDir(0),
+                                      p_prepLastInsertID(0) {
 }
 
 worker::~worker() {
@@ -81,37 +78,37 @@ void worker::cacheDirectoryEntriesFromDB(uint32_t id, vector<entry_t*>& entryCac
   entryCache.clear();
 
   p_prepQueryDirsByParent->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
-  while( res->next() ) {
+  p_prepQueryDirsByParent->executeQuery();
+  while( p_prepQueryDirsByParent->next() ) {
     entry_t* entry = new entry_t;
     entry->type = entry_t::directory;
     entry->state = entry_t::entryUnknown;
-    entry->id = res->getUInt(1);
+    entry->id = p_prepQueryDirsByParent->getUInt(1);
     entry->parent = id;
-    entry->name = res->getString(2);
-    entry->size = res->getUInt64(3);
-    entry->mtime = res->getUInt(4);
+    entry->name = p_prepQueryDirsByParent->getString(2);
+    entry->size = p_prepQueryDirsByParent->getUInt64(3);
+    entry->mtime = p_prepQueryDirsByParent->getUInt(4);
     entryCache.push_back(entry);
     LOG(logDebug) << "cache: got dir id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
   }
-  delete res;
+  p_prepQueryDirsByParent->release();
 
   p_prepQueryFilesByParent->setUInt(1,id);
-  res = p_prepQueryFilesByParent->executeQuery();
-  while( res->next() ) {
+  p_prepQueryFilesByParent->executeQuery();
+  while( p_prepQueryFilesByParent->next() ) {
     entry_t* entry = new entry_t;
     entry->type = entry_t::file;
     entry->state = entry_t::entryUnknown;
-    entry->id = res->getUInt(1);
+    entry->id = p_prepQueryFilesByParent->getUInt(1);
     entry->parent = id;
-    entry->name = res->getString(2);
-    entry->size = res->getUInt64(3);
-    entry->mtime = res->getUInt(4);
-    entry->hash = res->getString(5);
+    entry->name = p_prepQueryFilesByParent->getString(2);
+    entry->size = p_prepQueryFilesByParent->getUInt64(3);
+    entry->mtime = p_prepQueryFilesByParent->getUInt(4);
+    entry->hash = p_prepQueryFilesByParent->getString(5);
     entryCache.push_back(entry);
     LOG(logDebug) << "cache: got file id " << entry->id << " parent " << entry->parent << " name " << entry->name << " size " << entry->size << " mtime " << entry->mtime;
   }
-  delete res;
+  p_prepQueryFilesByParent->release();
 }
 
 void worker::clearDatabase() {
@@ -119,8 +116,9 @@ void worker::clearDatabase() {
     initDatabase();
   if (p_dryRun)
     return;
-  p_stmt->execute("DROP TABLE "+p_fileTable);
-  p_stmt->execute("DROP TABLE "+p_directoryTable);
+
+  query("DROP TABLE "+p_fileTable);
+  query("DROP TABLE "+p_directoryTable);
   LOG(logWarning) << "Database tables dropped, data is now gone";
   p_databaseInitialized = false;
 }
@@ -130,19 +128,16 @@ void worker::deleteDirectory(uint32_t id) { //completely delete directory "id" i
     initDatabase();
   LOG(logDebug) << "deleting directory id " << id;
   p_prepQueryDirsByParent->setUInt(1,id);
-  sql::ResultSet *res = p_prepQueryDirsByParent->executeQuery();
-  /*while( res->next() )
-    deleteDirectory( res->getUInt(1) ); //first, delete every subdirectory
-    */
-  list<uint32_t> childIds( res->rowsCount() ); //save all ids to a list since a ResultSet seems to become invalid when running a preparedStatement again (using nested function here)
-  list<uint32_t>::iterator childIdsIt = childIds.begin();
-  while( res->next() && childIdsIt != childIds.end() ) {
-    *childIdsIt = res->getUInt(1);
+  p_prepQueryDirsByParent->executeQuery();
+  vector<uint32_t> childIds( p_prepQueryDirsByParent->rowsCount() );
+  vector<uint32_t>::iterator childIdsIt = childIds.begin();
+  while( p_prepQueryDirsByParent->next() && childIdsIt != childIds.end() ) {
+    *childIdsIt = p_prepQueryDirsByParent->getUInt(1);
     childIdsIt++;
   }
-  delete res;
+  p_prepQueryDirsByParent->release();
   LOG(logDebug) << "got " << childIds.size() << " children of directory " << id;
-  for( list<uint32_t>::iterator it = childIds.begin(); it != childIds.end(); it++ )
+  for( vector<uint32_t>::iterator it = childIds.begin(); it != childIds.end(); it++ )
     deleteDirectory( *it );
   if (p_dryRun)
     return;
@@ -199,16 +194,16 @@ string worker::errnoString() {
 worker::entry_t worker::getDirectoryById(uint32_t id) {
   entry_t e = { .id = id, .mtime = 0, .name = string(), .parent = 0, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::directory, .hash = string() };
   p_prepQueryDirById->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryDirById->executeQuery();
-  if( res->next() ) {
-    e.name = res->getString(1);
-    e.parent = res->getUInt(2);
-    e.size = res->getUInt64(3);
-    e.mtime = res->getUInt(4);
+  p_prepQueryDirById->executeQuery();
+  if( p_prepQueryDirsByParent->next() ) {
+    e.name = p_prepQueryDirsByParent->getString(1);
+    e.parent = p_prepQueryDirsByParent->getUInt(2);
+    e.size = p_prepQueryDirsByParent->getUInt64(3);
+    e.mtime = p_prepQueryDirsByParent->getUInt(4);
   } else if (id == 0) {
     e.name = "<ROOT>";
   }
-  delete res;
+  p_prepQueryDirsByParent->release();
   return e;
 }
 
@@ -216,28 +211,28 @@ worker::entry_t worker::getDirectoryByName(const string& name, uint32_t parent) 
   entry_t e = { .id = 0, .mtime = 0, .name = name, .parent = parent, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::directory, .hash = string() };
   p_prepQueryDirByName->setUInt(1,parent);
   p_prepQueryDirByName->setString(2,name);
-  sql::ResultSet* res = p_prepQueryDirByName->executeQuery();
-  if( res->next() ) {
-    e.id = res->getUInt(1);
-    e.size = res->getUInt64(2);
-    e.mtime = res->getUInt(3);
+  p_prepQueryDirByName->executeQuery();
+  if( p_prepQueryDirByName->next() ) {
+    e.id = p_prepQueryDirByName->getUInt(1);
+    e.size = p_prepQueryDirByName->getUInt64(2);
+    e.mtime = p_prepQueryDirByName->getUInt(3);
   }
-  delete res;
+  p_prepQueryDirByName->release();
   return e;
 }
 
 worker::entry_t worker::getFileById(uint32_t id) {
   entry_t e = { .id = id, .mtime = 0, .name = string(), .parent = 0, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::file, .hash = string() };
   p_prepQueryFileById->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryFileById->executeQuery();
-  if( res->next() ) {
-    e.name = res->getString(1);
-    e.parent = res->getUInt(2);
-    e.size = res->getUInt64(3);
-    e.mtime = res->getUInt(4);
-    e.hash = res->getString(5);
+  p_prepQueryFileById->executeQuery();
+  if( p_prepQueryFileById->next() ) {
+    e.name = p_prepQueryFileById->getString(1);
+    e.parent = p_prepQueryFileById->getUInt(2);
+    e.size = p_prepQueryFileById->getUInt64(3);
+    e.mtime = p_prepQueryFileById->getUInt(4);
+    e.hash = p_prepQueryFileById->getString(5);
   }
-  delete res;
+  p_prepQueryFileById->release();
   return e;
 }
 
@@ -245,14 +240,14 @@ worker::entry_t worker::getFileByName(const string& name, uint32_t parent) {
   entry_t e = { .id = 0, .mtime = 0, .name = name, .parent = parent, .size = 0, .subSize = 0, .state = entry_t::entryUnknown, .type = entry_t::file, .hash = string() };
   p_prepQueryFileByName->setUInt(1,parent);
   p_prepQueryFileByName->setString(2,name);
-  sql::ResultSet* res = p_prepQueryFileByName->executeQuery();
-  if( res->next() ) {
-    e.id = res->getUInt(1);
-    e.size = res->getUInt64(2);
-    e.mtime = res->getUInt(3);
-    e.hash = res->getString(4);
+  p_prepQueryFileByName->executeQuery();
+  if( p_prepQueryFileByName->next() ) {
+    e.id = p_prepQueryFileByName->getUInt(1);
+    e.size = p_prepQueryFileByName->getUInt64(2);
+    e.mtime = p_prepQueryFileByName->getUInt(3);
+    e.hash = p_prepQueryFileByName->getString(4);
   }
-  delete res;
+  p_prepQueryFileByName->release();
   return e;
 }
 
@@ -317,25 +312,25 @@ void worker::initDatabase() {
   LOG(logDebug) << "create tables if not exists"; //create database tables in case they do not exist
   if (p_dryRun)
     return;
-  p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_directoryTable+" "
-                  "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY, "
-                  "name VARCHAR(255) NOT NULL, "
-                  "parent INT UNSIGNED DEFAULT NULL, "
-                  "size BIGINT UNSIGNED, "
-                  "date DATETIME DEFAULT NULL, "
-                  "INDEX(parent)) "
-                  "DEFAULT CHARACTER SET utf8 "
-                  "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
-  p_stmt->execute("CREATE TABLE IF NOT EXISTS "+p_fileTable+" "
-                  "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
-                  "name VARCHAR(255) NOT NULL, "
-                  "parent INT UNSIGNED DEFAULT NULL, "
-                  "size BIGINT UNSIGNED, "
-                  "date DATETIME DEFAULT NULL, "
-                  "hash VARCHAR(40) DEFAULT NULL, " //use VARCHAR instead of BINARY due to TTH hash support (encoded 39chars base32), md5 and sha1 are encoded hex
-                  "INDEX(parent)) "
-                  "DEFAULT CHARACTER SET utf8 "
-                  "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
+  query("CREATE TABLE IF NOT EXISTS "+p_directoryTable+" "
+        "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY, "
+        "name VARCHAR(255) NOT NULL, "
+        "parent INT UNSIGNED DEFAULT NULL, "
+        "size BIGINT UNSIGNED, "
+        "date DATETIME DEFAULT NULL, "
+        "INDEX(parent)) "
+        "DEFAULT CHARACTER SET utf8 "
+        "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
+  query("CREATE TABLE IF NOT EXISTS "+p_fileTable+" "
+        "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
+        "name VARCHAR(255) NOT NULL, "
+        "parent INT UNSIGNED DEFAULT NULL, "
+        "size BIGINT UNSIGNED, "
+        "date DATETIME DEFAULT NULL, "
+        "hash VARCHAR(40) DEFAULT NULL, " //use VARCHAR instead of BINARY due to TTH hash support (encoded 39chars base32), md5 and sha1 are encoded hex
+        "INDEX(parent)) "
+        "DEFAULT CHARACTER SET utf8 "
+        "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
 
   prepareStatements();
 
@@ -447,12 +442,12 @@ uint32_t worker::insertDirectory(uint32_t parent, const string& name, uint64_t s
   p_prepInsertDir->execute();
 
   uint32_t id = 0;
-  sql::ResultSet* res = p_prepLastInsertID->executeQuery();
-  if( res->next() )
-    id = res->getUInt(1);
+  p_prepLastInsertID->executeQuery();
+  if( p_prepLastInsertID->next() )
+    id = p_prepLastInsertID->getUInt(1);
   else
     LOG(logError) << "Insert statement failed for " << name;
-  delete res;
+  p_prepLastInsertID->release();
   return id;
 }
 
@@ -471,12 +466,12 @@ uint32_t worker::insertFile(uint32_t parent, const string& name, uint64_t size, 
   p_prepInsertFile->execute();
 
   uint32_t id = 0;
-  sql::ResultSet* res = p_prepLastInsertID->executeQuery();
-  if( res->next() )
-    id = res->getUInt(1);
+  p_prepLastInsertID->executeQuery();
+  if( p_prepLastInsertID->next() )
+    id = p_prepLastInsertID->getUInt(1);
   else
     LOG(logError) << "Insert statement failed for " << name;
-  delete res;
+  p_prepLastInsertID->release();
   return id;
 }
 
@@ -733,10 +728,11 @@ worker::entry_t worker::readPath(const string& path) {
 
 void worker::removeWatches(uint32_t id) {
   p_prepQueryDirsByParent->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
-  vector<uint32_t> cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
-  while( res->next() )
-    cache.push_back(res->getUInt(1));
+  p_prepQueryDirsByParent->executeQuery();
+  vector<uint32_t> cache;
+  while( p_prepQueryDirsByParent->next() )
+    cache.push_back(p_prepQueryDirsByParent->getUInt(1));
+  p_prepQueryDirsByParent->release();
   for( vector<uint32_t>::iterator it = cache.begin(); it != cache.end(); it++ )
     removeWatches(*it);
   LOG(logDebug) << "removing watch of id " << id;
@@ -750,12 +746,12 @@ void worker::resetStatistics() {
   p_statistics.directories = 0;
 }
 
-void worker::setConnection(sql::Connection* dbConnection) {
+void worker::setConnection(MYSQL* dbConnection) {
   p_connection = dbConnection;
   p_databaseInitialized = false;
 }
 
-sql::Connection* worker::getConnection() const {
+MYSQL* worker::getConnection() const {
   return p_connection;
 }
 
@@ -782,11 +778,11 @@ void worker::setTables(const string& directoryTable, const string& fileTable) {
 
 void worker::setupWatches(const string& path, uint32_t id) {
   p_prepQueryDirsByParent->setUInt(1,id);
-  sql::ResultSet* res = p_prepQueryDirsByParent->executeQuery();
-  vector< pair<uint32_t, string> > cache; //somehow using an prepared statements invalidates previous resultSets, thus we have to cache its content
-  while( res->next() )
-    cache.push_back( make_pair(res->getUInt(1), res->getString(2)) );
-  delete res;
+  p_prepQueryDirsByParent->executeQuery();
+  vector< pair<uint32_t, string> > cache;
+  while( p_prepQueryDirsByParent->next() )
+    cache.push_back( make_pair(p_prepQueryDirsByParent->getUInt(1), p_prepQueryDirsByParent->getString(2)) );
+  p_prepQueryDirsByParent->release();
   for( vector< pair<uint32_t, string> >::iterator it = cache.begin(); it != cache.end(); it++ )
     setupWatches(path+'/'+it->second, it->first);
   LOG(logDetailed) << "Setting up watch for \"" << path << "\" (id " << id << ')';
@@ -843,10 +839,11 @@ void worker::verifyTree() {
   list<uint32_t>::iterator cacheIterator;
 
   LOG(logDetailed) << "Verifying directories";
-  sql::ResultSet* res = p_stmt->executeQuery("SELECT id,parent FROM "+p_directoryTable);
-  while( p_run && res->next() ) { //loop through all directories
-    uint32_t id = res->getUInt(1);
-    uint32_t parent = res->getUInt(2);
+  PreparedStatementWrapper* stmt = PreparedStatementWrapper::create(this, "SELECT id,parent FROM "+p_directoryTable);
+  stmt->execute();
+  while( p_run && stmt->next() ) { //loop through all directories
+    uint32_t id = stmt->getUInt(1);
+    uint32_t parent = stmt->getUInt(2);
     uint32_t tempId = id; //id-parent pairs used to trace up until they are either found in idCache or tempParentId gets zero
     uint32_t tempParentId = parent;
     list<uint32_t> tempIdCache;
@@ -858,7 +855,7 @@ void worker::verifyTree() {
       if (!p_dryRun) {
         stringstream ss;
         ss << "DELETE FROM " << p_directoryTable << " WHERE parent=" << id;
-        p_stmt->execute(ss.str());
+        query(ss.str());
         p_prepDeleteFiles->setUInt(1,id); //delete all files with parent "id"
         p_prepDeleteFiles->execute();
       }
@@ -868,11 +865,11 @@ void worker::verifyTree() {
     while( p_run && tempParentId != 0 && find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
       LOG(logDebug) << "Ancestor: id " << tempId << " parent " << tempParentId;
       p_prepQueryParentOfDir->setUInt(1,tempParentId);
-      sql::ResultSet *parentQueryResult = p_prepQueryParentOfDir->executeQuery();
-      if( parentQueryResult->next() ) {
+      p_prepQueryParentOfDir->executeQuery();
+      if( p_prepQueryParentOfDir->next() ) {
         LOG(logDebug) << "found ancestor id " << tempParentId << " of id " << id << " in database, continueing trace";
         tempId = tempParentId;
-        tempParentId = parentQueryResult->getUInt(1);
+        tempParentId = p_prepQueryParentOfDir->getUInt(1);
         tempIdCache.push_back(tempId); //tempId was found in the database, so it's a valid parent (if we are able to complete the trace)
       } else {
         LOG(logWarning) << "Parent " << tempParentId << " of directory " << tempId << " does not exist. Deleting that subtree!";
@@ -886,19 +883,19 @@ void worker::verifyTree() {
         tempId = 0; //indicate failure
         tempParentId = 0;
       }
-      delete parentQueryResult;
+      p_prepQueryParentOfDir->release();
     }
     LOG(logDebug) << "Traceback complete, tempId " << tempId << " tempParentId " << tempParentId;
     if( tempId != 0 ) //only cache if valid
       idCache->merge(tempIdCache); //cache all temporary ids as the trace is okay
   }
-  delete res;
+  delete stmt;
 
   LOG(logDetailed) << "Verifying files";
-  res = p_stmt->executeQuery("SELECT id,parent FROM "+p_fileTable);
-  while( p_run && res->next() ) {
-    uint32_t id = res->getUInt(1);
-    uint32_t parent = res->getUInt(2);
+  stmt = PreparedStatementWrapper::create(this, "SELECT id,parent FROM "+p_fileTable);
+  while( p_run && stmt->next() ) {
+    uint32_t id = stmt->getUInt(1);
+    uint32_t parent = stmt->getUInt(2);
     if( parent == 0 || find(idCache->begin(), idCache->end(), parent) == idCache->end() ) {
       LOG(logWarning) << "Parent " << parent << " of file " << id << " does not exist. Deleting that file";
       if (!p_dryRun) {
@@ -907,7 +904,7 @@ void worker::verifyTree() {
       }
     }
   }
-  delete res;
+  delete stmt;
   delete idCache;
 }
 
@@ -1086,4 +1083,10 @@ void worker::watch(const string& path, uint32_t id) {
   //program cannot reach that point till now
   LOG(logInfo) << "Giving up watches";
   removeWatches(id);
+}
+
+void worker::query(const string& query) {
+  int ret = mysql_query(p_connection, query.c_str());
+  if (ret)
+    throw SQLException("mysql_query failed: "+string(mysql_error(p_connection)));
 }
