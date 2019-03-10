@@ -72,6 +72,7 @@ bool PreparedStatementWrapper::execute() {
   if (ret)
     throw SQLException("mysql_stmt_execute failed", p_stmt);
 
+  p_rowValid = false;
   return ret;
 }
 
@@ -81,21 +82,12 @@ bool PreparedStatementWrapper::execute() {
 // }
 
 int PreparedStatementWrapper::executeQuery() {
-  testConnection();
-
-  int ret = mysql_stmt_bind_param(p_stmt, p_binds.data());
-  if (ret)
-    throw SQLException("mysql_stmt_bind_param failed", p_stmt);
-
-  ret = mysql_stmt_execute(p_stmt);
-  if (ret)
-    throw SQLException("mysql_stmt_execute failed", p_stmt);
+  int ret = execute();
 
   ret = mysql_stmt_store_result(p_stmt);
   if (ret)
     throw SQLException("mysql_stmt_store_result failed", p_stmt);
 
-  p_rowValid = false;
   return rowsCount();
 }
 
