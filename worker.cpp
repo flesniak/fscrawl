@@ -562,7 +562,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
         entry->state = entry_t::entryPropertiesChanged;
       }
       //if hasher is enabled and properties are changed or no hash is calculated yet or hashing is forced, rehash file
-      if( p_hasher && entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0 || p_forceHashing) ) {
+      if( entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0 || p_forceHashing) ) {
         hashFile(entry, dirEntryPath);
         entry->state = entry_t::entryPropertiesChanged; //force property update
       }
@@ -848,18 +848,6 @@ void worker::verifyTree() {
     uint32_t tempParentId = parent;
     list<uint32_t> tempIdCache;
     LOG(logDebug) << "Verify: id " << id << " parent " << parent;
-    if( id == parent ) {
-      LOG(logWarning) << "id " << id << " is it's own parent. Deleting!";
-      tempId = 0; //indicate failure
-      tempParentId = 0;
-      if (!p_dryRun) {
-        stringstream ss;
-        ss << "DELETE FROM " << p_directoryTable << " WHERE parent=" << id;
-        query(ss.str());
-        p_prepDeleteFiles->setUInt(1,id); //delete all files with parent "id"
-        p_prepDeleteFiles->execute();
-      }
-    }
     tempIdCache.push_back(id); //pre-cache id in case it may be valid
     //now we check if we can find the given parent of id
     while( p_run && tempParentId != 0 && find(idCache->begin(), idCache->end(), tempParentId) == idCache->end() ) {
