@@ -191,8 +191,7 @@ uint32_t PreparedStatementWrapper::getUInt(unsigned int index) {
     throw out_of_range("field index out of range");
 
   uint32_t tmp;
-  MYSQL_BIND bind;
-  memset(&bind, 0, sizeof(bind));
+  MYSQL_BIND bind = {};
   bind.buffer_type = MYSQL_TYPE_LONG;
   bind.buffer = &tmp;
   bind.buffer_length = sizeof(tmp);
@@ -212,8 +211,7 @@ uint64_t PreparedStatementWrapper::getUInt64(unsigned int index) {
     throw out_of_range("field index out of range");
 
   uint64_t tmp;
-  MYSQL_BIND bind;
-  memset(&bind, 0, sizeof(bind));
+  MYSQL_BIND bind = {};
   bind.buffer_type = MYSQL_TYPE_LONGLONG;
   bind.buffer = &tmp;
   bind.buffer_length = sizeof(tmp);
@@ -232,9 +230,8 @@ std::string PreparedStatementWrapper::getString(unsigned int index) {
   if (index > mysql_stmt_field_count(p_stmt))
     throw out_of_range("field index out of range");
 
-  char tmp[256];
-  MYSQL_BIND bind;
-  memset(&bind, 0, sizeof(bind));
+  char tmp[256] = {};
+  MYSQL_BIND bind = {};
   bind.buffer_type = MYSQL_TYPE_STRING;
   bind.buffer = tmp;
   bind.buffer_length = sizeof(tmp);
