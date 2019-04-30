@@ -310,27 +310,27 @@ void worker::hashCheck(const string& path, uint32_t parent) {
 
 void worker::initDatabase() {
   LOG(logDebug) << "create tables if not exists"; //create database tables in case they do not exist
-  if (p_dryRun)
-    return;
-  query("CREATE TABLE IF NOT EXISTS "+p_directoryTable+" "
-        "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY, "
-        "name VARCHAR(255) NOT NULL, "
-        "parent INT UNSIGNED DEFAULT NULL, "
-        "size BIGINT UNSIGNED, "
-        "date DATETIME DEFAULT NULL, "
-        "INDEX(parent)) "
-        "DEFAULT CHARACTER SET utf8 "
-        "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
-  query("CREATE TABLE IF NOT EXISTS "+p_fileTable+" "
-        "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
-        "name VARCHAR(255) NOT NULL, "
-        "parent INT UNSIGNED DEFAULT NULL, "
-        "size BIGINT UNSIGNED, "
-        "date DATETIME DEFAULT NULL, "
-        "hash VARCHAR(40) DEFAULT NULL, " //use VARCHAR instead of BINARY due to TTH hash support (encoded 39chars base32), md5 and sha1 are encoded hex
-        "INDEX(parent)) "
-        "DEFAULT CHARACTER SET utf8 "
-        "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
+  if (!p_dryRun) {
+    query("CREATE TABLE IF NOT EXISTS "+p_directoryTable+" "
+          "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY, "
+          "name VARCHAR(255) NOT NULL, "
+          "parent INT UNSIGNED DEFAULT NULL, "
+          "size BIGINT UNSIGNED, "
+          "date DATETIME DEFAULT NULL, "
+          "INDEX(parent)) "
+          "DEFAULT CHARACTER SET utf8 "
+          "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two directories named "Moo" and "Möo"
+    query("CREATE TABLE IF NOT EXISTS "+p_fileTable+" "
+          "(id INT UNSIGNED NOT NULL AUTO_INCREMENT KEY,"
+          "name VARCHAR(255) NOT NULL, "
+          "parent INT UNSIGNED DEFAULT NULL, "
+          "size BIGINT UNSIGNED, "
+          "date DATETIME DEFAULT NULL, "
+          "hash VARCHAR(40) DEFAULT NULL, " //use VARCHAR instead of BINARY due to TTH hash support (encoded 39chars base32), md5 and sha1 are encoded hex
+          "INDEX(parent)) "
+          "DEFAULT CHARACTER SET utf8 "
+          "COLLATE utf8_bin"); //utf8_bin collation against errors with umlauts, e.g. two files named "Moo" and "Möo"
+  }
 
   prepareStatements();
 
