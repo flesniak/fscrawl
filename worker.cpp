@@ -562,7 +562,7 @@ void worker::parseDirectory(const string& path, entry_t* ownEntry) {
         entry->state = entry_t::entryPropertiesChanged;
       }
       //if hasher is enabled and properties are changed or no hash is calculated yet or hashing is forced, rehash file
-      if( entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0 || p_forceHashing) ) {
+      if( p_hasher && entry->type == entry_t::file && (entry->state == entry_t::entryPropertiesChanged || entry->hash.length() == 0 || p_forceHashing) ) {
         hashFile(entry, dirEntryPath);
         entry->state = entry_t::entryPropertiesChanged; //force property update
       }
