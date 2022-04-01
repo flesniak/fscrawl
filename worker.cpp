@@ -53,7 +53,9 @@ void worker::abort() {
 }
 
 void worker::setDryRun(bool on) {
-  LOG(logInfo) << "performing dry run";
+  if (on) {
+    LOG(logInfo) << "performing dry run";
+  }
   p_dryRun = on;
 }
 
