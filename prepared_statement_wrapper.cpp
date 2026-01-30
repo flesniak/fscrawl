@@ -3,9 +3,6 @@
 #include "worker.h"
 #include "sqlexception.h"
 
-#include <unistd.h>
-#include <string.h>
-
 PreparedStatementWrapper::PreparedStatementWrapper()
   : p_reconnectAttempts(0),
     p_stmt(0)
